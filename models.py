@@ -39,4 +39,8 @@ STORAGE_MODEL_MAP = {
     "msa 2042 san":  "HPE MSA 2042",
     "msa 2050 san":  "HPE MSA 2050",
     "msa 2052 san":  "HPE MSA 2052",
+    "msa 2060 san":  "HPE MSA 2060",
+    "msa 2060":      "HPE MSA 2060",
+    "msa 2062 san":  "HPE MSA 2062",
+    "msa 2062":      "HPE MSA 2062",
 }
