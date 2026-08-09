@@ -1,10 +1,12 @@
 """HPE MSA storage: XML API session, probing and per-array inventory
 collection (with MSA 2040/2060 firmware-difference handling)."""
 import hashlib
+import ssl
 import time
 from xml.etree import ElementTree as ET
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from netbox_sync.config import (STORAGE_USER, STORAGE_PASS, STORAGE_PORT,
                                 STORAGE_AUTH_HASH, DEFAULT_MFR, log)
@@ -16,6 +18,27 @@ from netbox_sync.utils import (normalize_model, gib_from_bytes, _make_add_item,
                                name_storage_psu, name_storage_controller)
 
 
+class _LegacyTLSAdapter(HTTPAdapter):
+    """Older MSA arrays (G1/G2 firmware) offer only legacy TLS — weak certs /
+    cipher suites that modern OpenSSL (SECLEVEL>=1) rejects with
+    SSLV3_ALERT_HANDSHAKE_FAILURE. Lower the security level for the storage
+    session only (verify stays off either way for these self-signed boxes)."""
+
+    def __init__(self, *args, **kwargs):
+        self._ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        self._ssl_context.check_hostname = False
+        self._ssl_context.verify_mode = ssl.CERT_NONE
+        try:
+            self._ssl_context.set_ciphers("DEFAULT:@SECLEVEL=0")
+        except ssl.SSLError:
+            pass
+        super().__init__(*args, **kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False, **kwargs):
+        kwargs["ssl_context"] = self._ssl_context
+        return super().init_poolmanager(connections, maxsize, block, **kwargs)
+
+
 class StorageSession:
     API_PREFIX = "/api/"
 
@@ -23,6 +46,7 @@ class StorageSession:
         self.ip = ip
         self.base = f"https://{ip}:{port}"
         self.session = requests.Session()
+        self.session.mount("https://", _LegacyTLSAdapter())
         self.session.verify = False
         self.session_key = None
 
