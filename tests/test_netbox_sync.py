@@ -2055,3 +2055,49 @@ def test_custom_fields_noop_when_all_if_set(monkeypatch):
     nbx.ensure_custom_fields_if_set()
 
     assert ep.updated == []
+
+
+def test_ensure_custom_fields_creates_missing(monkeypatch):
+    """A fresh NetBox has none of the tool's CFs: ensure_custom_fields()
+    creates them all (dcim.device, ui_visible=if-set), skips existing ones,
+    and still normalizes visibility on the rest."""
+    existing = FakeRecord(1, name="bmc_ip", ui_visible={"value": "always"})
+
+    class _CFFake:
+        def __init__(self):
+            self.created = []
+            self.updated = []
+        def all(self):
+            return [existing] + [FakeRecord(100 + i, name=p["name"],
+                                            ui_visible=p.get("ui_visible"))
+                                 for i, p in enumerate(self.created)]
+        def create(self, payload):
+            self.created.append(payload)
+            return FakeRecord(999, **payload)
+        def update(self, payload_list):
+            self.updated.extend(payload_list)
+            return True
+
+    ep = _CFFake()
+    api = SimpleNamespace(extras=SimpleNamespace(custom_fields=ep))
+    monkeypatch.setattr(nbx, "get_netbox", lambda: api)
+
+    nbx.ensure_custom_fields()
+
+    created_names = [p["name"] for p in ep.created]
+    assert len(created_names) == len(nbx.CUSTOM_FIELDS) - 1   # bmc_ip existed
+    assert "bmc_ip" not in created_names
+    for p in ep.created:
+        assert p["object_types"] == ["dcim.device"]
+        assert p["ui_visible"] == "if-set"
+        assert p["type"] in ("text", "integer", "boolean")
+    # visibility normalization still ran on the pre-existing field
+    assert {"id": 1, "ui_visible": "if-set"} in ep.updated
+
+
+def test_custom_fields_registry_sanity():
+    names = [n for n, _, _ in nbx.CUSTOM_FIELDS]
+    assert len(names) == len(set(names))            # no duplicates
+    assert all(t in ("text", "integer", "boolean")
+               for _, t, _ in nbx.CUSTOM_FIELDS)
+    assert all(label for _, _, label in nbx.CUSTOM_FIELDS)

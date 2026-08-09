@@ -260,7 +260,7 @@ Inventory-item **roles** are resolved **by name** and **auto-created** on first 
 
 ### 2. Custom fields
 
-The script writes **custom fields** on devices. Create these in NetBox (`/extras/custom-fields/`, object type `dcim | device`):
+The script writes **custom fields** on devices. They are **created automatically at the start of every sync** (object type `dcim | device`, visibility `if-set`) — no manual setup needed. The full list, for reference:
 
 **For servers:**
 
@@ -743,7 +743,7 @@ DEFAULT_SWITCH_ROLE=SAN Switch
 
 ### ۲. فیلدهای سفارشی
 
-اسکریپت **custom fields** را روی دستگاه‌ها می‌نویسد. این فیلدها را در NetBox (`/extras/custom-fields/`، با نوع شیء `dcim | device`) ایجاد کنید:
+اسکریپت **custom fields** را روی دستگاه‌ها می‌نویسد. این فیلدها **در ابتدای هر همگام‌سازی به‌طور خودکار ساخته می‌شوند** (نوع شیء `dcim | device`، نمایش `if-set`) — نیازی به تنظیم دستی نیست. فهرست کامل، برای مرجع:
 
 **برای سرورها:**
 

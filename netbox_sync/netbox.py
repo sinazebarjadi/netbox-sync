@@ -798,6 +798,111 @@ def ensure_custom_fields_if_set():
         log("DEBUG", "  custom fields: all already ui_visible=if-set")
 
 
+# ── Custom-field registry ────────────────────────────────────────────────────
+# Every custom field the tool writes/filters, on dcim.device. Source of truth
+# for automatic creation — keep in sync with the README tables.
+CUSTOM_FIELDS = [
+    # (name, type, label) — servers (Redfish)
+    ("bmc_ip",                    "text",    "BMC IP"),
+    ("redfish_enabled",           "boolean", "Redfish enabled"),
+    ("redfish_model",             "text",    "Redfish model"),
+    ("redfish_power_state",       "text",    "Power state"),
+    ("redfish_bios_version",      "text",    "BIOS version"),
+    ("redfish_cpu_model",         "text",    "CPU model"),
+    ("redfish_cpu_sockets",       "integer", "CPU sockets"),
+    ("redfish_cpu_cores",         "integer", "CPU cores"),
+    ("redfish_cpu_threads",       "integer", "CPU threads"),
+    ("redfish_ram_gib",           "integer", "RAM (GiB)"),
+    ("redfish_disk_total_gib",    "integer", "Total disk (GiB)"),
+    # storage (MSA)
+    ("storage_ip",                "text",    "Storage IP"),
+    ("storage_enabled",           "boolean", "Storage enabled"),
+    ("storage_health",            "text",    "Health"),
+    ("storage_firmware",          "text",    "Firmware"),
+    ("storage_model",             "text",    "Model"),
+    ("storage_disk_count",        "integer", "Disk count"),
+    ("storage_total_capacity_gib", "integer", "Total capacity (GiB)"),
+    # SAN switches (Brocade)
+    ("san_switch_ip",             "text",    "SAN switch IP"),
+    ("san_switch_enabled",        "boolean", "SAN switch enabled"),
+    ("san_switch_wwn",            "text",    "Switch WWN"),
+    ("san_switch_firmware",       "text",    "Firmware (Fabric OS)"),
+    ("san_switch_model",          "text",    "Model"),
+    ("san_switch_port_count",     "integer", "Port count"),
+    # Cisco Catalyst
+    ("cisco_ip",                  "text",    "Cisco switch IP"),
+    ("cisco_enabled",             "boolean", "Cisco switch enabled"),
+    ("cisco_firmware",            "text",    "IOS version"),
+    ("cisco_model",               "text",    "Model"),
+    ("cisco_port_count",          "integer", "Port count"),
+    # FortiGate
+    ("fortigate_ip",              "text",    "FortiGate IP"),
+    ("fortigate_enabled",         "boolean", "FortiGate enabled"),
+    ("fortigate_firmware",        "text",    "FortiOS version"),
+    ("fortigate_model",           "text",    "Model"),
+    ("fortigate_port_count",      "integer", "Port count"),
+    ("fortigate_ha_group",        "text",    "HA cluster group name"),
+    ("fortigate_ha_mode",         "text",    "HA mode (a-p / a-a)"),
+    ("fortigate_ha_peer",         "text",    "HA peer units"),
+    ("fortigate_ha_role",         "text",    "Role of the probed unit"),
+    # Ruckus ZoneDirector
+    ("wlc_ip",                    "text",    "Controller IP"),
+    ("wlc_enabled",               "boolean", "Controller enabled"),
+    ("wlc_model",                 "text",    "Model"),
+    ("wlc_firmware",              "text",    "Firmware"),
+    ("wlc_ap_count",              "integer", "AP count"),
+    ("wlc_ha_role",               "text",    "HA role"),
+    ("wlc_vip",                   "text",    "HA virtual IP"),
+    # access points (shared Ruckus/UniFi)
+    ("wap_mac",                   "text",    "AP MAC"),
+    ("wap_enabled",               "boolean", "AP enabled"),
+    ("wap_group",                 "text",    "AP group / site"),
+    ("wap_wlc",                   "text",    "Controller name"),
+    # NVRs (Hikvision / Dahua / Uniview) + cameras
+    ("nvr_ip",                    "text",    "NVR IP"),
+    ("nvr_enabled",               "boolean", "NVR enabled"),
+    ("nvr_model",                 "text",    "Model"),
+    ("nvr_firmware",              "text",    "Firmware version"),
+    ("nvr_camera_count",          "integer", "Number of attached cameras"),
+    ("cam_ip",                    "text",    "Camera IP"),
+    ("cam_mac",                   "text",    "Camera MAC (if known)"),
+    ("cam_enabled",               "boolean", "Camera enabled (online)"),
+    ("cam_nvr",                   "text",    "Parent NVR name"),
+    ("cam_channel",               "integer", "NVR channel number"),
+    ("cam_model",                 "text",    "Model"),
+    ("cam_serial",                "text",    "Camera serial"),
+    # UniFi OS consoles
+    ("unifi_ip",                  "text",    "UniFi console IP"),
+    ("unifi_enabled",             "boolean", "UniFi enabled"),
+    ("unifi_version",             "text",    "UniFi OS version"),
+    ("unifi_ap_count",            "integer", "Number of managed APs"),
+    ("unifi_sites",               "integer", "Number of sites"),
+]
+
+
+def ensure_custom_fields():
+    """Create every missing custom field from CUSTOM_FIELDS (dcim.device,
+    ui_visible=if-set), then normalize visibility on all. MUST run before any
+    cf_* filter is used in a sync: NetBox SILENTLY IGNORES filters on
+    nonexistent custom fields (the filter matches every device) — on a fresh
+    NetBox that made the camera sweep mark the whole fleet offline and AP
+    MAC lookups adopt random devices."""
+    api = get_netbox()
+    existing = {cf.name for cf in api.extras.custom_fields.all()}
+    created = 0
+    for name, typ, label in CUSTOM_FIELDS:
+        if name in existing:
+            continue
+        api.extras.custom_fields.create({
+            "name": name, "label": label, "type": typ,
+            "object_types": ["dcim.device"], "ui_visible": "if-set",
+            "description": "netbox-sync: managed field"})
+        created += 1
+    if created:
+        log("INFO", f"  custom fields: created {created} missing field(s)")
+    ensure_custom_fields_if_set()
+
+
 _WLAN_AUTH_MAP = {"open": "open", "wpa": "wpa-personal",
                   "wpa2": "wpa-personal", "wpa3": "wpa-personal",
                   "802.1x": "wpa-enterprise", "8021x": "wpa-enterprise",
