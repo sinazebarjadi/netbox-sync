@@ -175,12 +175,14 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
         # Cameras -> separate devices, linked to the NVR via cam_nvr.
         seen_camera_serials = set()
         for cam in data["cameras"]:
+            serial = (cam.get("serial") or "").strip()
+            if serial:
+                # what the NVR reported — independent of sync success, so a
+                # failed ensure can never cause a false offline marking
+                seen_camera_serials.add(serial)
             try:
                 cam_dev = ensure_camera_device(
                     cam, nvr_name, manufacturer=cam.get("manufacturer"))
-                serial = (cam.get("serial") or "").strip()
-                if serial:
-                    seen_camera_serials.add(serial)
                 cam_iface = None
                 if mac_map:
                     try:

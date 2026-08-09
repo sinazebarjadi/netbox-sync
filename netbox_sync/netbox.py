@@ -707,21 +707,38 @@ def ensure_camera_device(cam, nvr_name, role_name=None, manufacturer="Hikvision"
         dev = find_device(serial, role_name=role)
     if dev is None:
         for cand in names:
-            cands = list(api.dcim.devices.filter(name=cand, site_id=site_id,
-                                                 role_id=role_id))
+            # adopt by name+site+role only when the candidate has no
+            # cam_serial of its own — a device with a DIFFERENT serial is
+            # another camera, not this one
+            cands = [d for d in api.dcim.devices.filter(
+                         name=cand, site_id=site_id, role_id=role_id)
+                     if not (d.custom_fields or {}).get("cam_serial")]
             if cands:
                 dev = cands[0]
-                name = cand
-                log("INFO", f"  Found camera by name+site: {name} (id={dev.id})")
+                log("INFO", f"  Found camera by name+site: {cand} (id={dev.id})")
                 break
-    if dev is None:
-        # new device: pick the first candidate not taken by ANY role at the site
-        for cand in names:
-            if not list(api.dcim.devices.filter(name=cand, site_id=site_id)):
-                name = cand
-                break
-        else:
-            log("WARN", f"  all camera name candidates taken at site: {names}")
+    # Final name: first candidate not held by a DIFFERENT device (any role).
+    # Applies to updates too — a serial-matched camera must NOT be renamed
+    # into a colliding plain title (that 400'd, and the failed ensure then
+    # kept the serial out of seen_camera_serials, so the sweep offlined a
+    # healthy camera).
+    own_id = dev.id if dev else None
+    final = None
+    for cand in names:
+        if not any(d.id != own_id
+                   for d in api.dcim.devices.filter(name=cand, site_id=site_id)):
+            final = cand
+            break
+    if final is None:
+        tail = serial[-4:] if serial else (f"ch{ch}" if ch is not None else "x")
+        cand = f"{name[:63 - len(tail)]}-{tail}"
+        if not any(d.id != own_id
+                   for d in api.dcim.devices.filter(name=cand, site_id=site_id)):
+            final = cand
+    if final is None:
+        log("WARN", f"  all camera name candidates taken at site: {names}")
+        final = name
+    name = final
     cf = {"cam_ip": cam.get("ip"), "cam_enabled": bool(cam.get("online")),
           "cam_nvr": nvr_name, "cam_model": cam.get("model")}
     if serial:

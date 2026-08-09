@@ -2016,6 +2016,59 @@ def test_camera_device_suffixed_when_name_taken_by_other_role(monkeypatch):
     assert devices_ep.created[0]["name"] == "GF-cam11"
     assert dev_id is not None
 
+
+def test_camera_update_keeps_suffix_when_plain_name_taken(monkeypatch):
+    """A serial-matched camera previously suffixed ('GF-cam11') must NOT be
+    renamed back to 'GF' while a UniFi AP holds that name — the rename 400s,
+    and the failure then cascaded into a false offline sweep."""
+    serial = "DS-2CD1143G0-I20211208AAWRJ21084215"
+    ap_dev = FakeRecord(141, name="GF", site_id=7, role_id=50)   # the UniFi AP
+    cam_dev = FakeRecord(270, name="GF-cam11", site_id=7, role_id=51,
+                         role=SimpleNamespace(name="Camera"),
+                         serial=serial,
+                         custom_fields={"cam_serial": serial})
+    devices_ep = FakeEndpoint([ap_dev, cam_dev])
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda name, color: 51)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda name: 7)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda m, mfr: 77)
+    monkeypatch.setattr(nbx, "resolve_site", lambda name, ip: "S")
+
+    cam = {"channel": 11, "name": "GF", "ip": "192.168.252.33",
+           "model": "DS-2CD1143G0-I", "serial": serial, "online": True}
+    dev_id = nbx.ensure_camera_device(cam, "dahua-192-168-252-5")
+
+    assert dev_id == 270
+    assert devices_ep.updated[-1]["name"] == "GF-cam11"   # NOT renamed to "GF"
+    assert devices_ep.created == []
+
+
+def test_camera_adoption_never_steals_other_cameras_device(monkeypatch):
+    """Name+site+role adoption must skip devices that already carry a
+    DIFFERENT cam_serial — that device belongs to another camera."""
+    other = FakeRecord(90, name="GF", site_id=7, role_id=51,
+                       serial="OTHER-SERIAL",
+                       custom_fields={"cam_serial": "OTHER-SERIAL"})
+    devices_ep = FakeEndpoint([other])
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda name, color: 51)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda name: 7)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda m, mfr: 77)
+    monkeypatch.setattr(nbx, "resolve_site", lambda name, ip: "S")
+    monkeypatch.setattr(nbx, "find_device", lambda serial, role_name=None: None)
+
+    cam = {"channel": 12, "name": "GF", "ip": "192.168.252.34",
+           "model": "DS-2CD1143G0-I", "serial": "NEW-SERIAL", "online": True}
+    dev_id = nbx.ensure_camera_device(cam, "dahua-192-168-252-5")
+
+    assert dev_id != 90                                  # not adopted
+    assert devices_ep.created[0]["name"] == "GF-cam12"   # new, suffixed
+    assert devices_ep.created[0]["serial"] == "NEW-SERIAL"
+
 # ── Custom-field UI visibility normalization ─────────────────────────────────
 
 class _FakeCFEndpoint:
