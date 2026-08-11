@@ -159,17 +159,29 @@ def hikvision_collect(ip):
             cam["online"] = status.get(cam["channel"], False)
             cam["mac"] = None
             if cam.get("channel"):
-                try:
-                    ci = _parse_device_info(sess.get(
-                        f"/ISAPI/ContentMgmt/InputProxy/channels/"
-                        f"{cam['channel']}/deviceInfo"))
-                    cam["mac"] = ci.get("mac")
-                    # the proxied deviceInfo is authoritative for model/serial/fw
-                    cam["model"] = ci.get("model") or cam.get("model")
-                    cam["serial"] = ci.get("serial") or cam.get("serial")
-                    cam["firmware"] = ci.get("firmware") or cam.get("firmware")
-                except Exception as exc:
-                    log("WARN", f"  camera ch{cam['channel']} deviceInfo failed: {exc}")
+                # Big NVRs rate-limit the proxied per-channel calls with
+                # 503s — retry with backoff before giving up (a missing
+                # serial/MAC here used to cause false offline markings).
+                ci = None
+                for attempt in (0, 2, 5):
+                    if attempt:
+                        time.sleep(attempt)
+                    try:
+                        ci = _parse_device_info(sess.get(
+                            f"/ISAPI/ContentMgmt/InputProxy/channels/"
+                            f"{cam['channel']}/deviceInfo"))
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                if ci is None:
+                    log("WARN", f"  camera ch{cam['channel']} deviceInfo "
+                                f"failed after retries: {last_exc}")
+                    continue
+                cam["mac"] = ci.get("mac")
+                # the proxied deviceInfo is authoritative for model/serial/fw
+                cam["model"] = ci.get("model") or cam.get("model")
+                cam["serial"] = ci.get("serial") or cam.get("serial")
+                cam["firmware"] = ci.get("firmware") or cam.get("firmware")
         log("INFO", f"  hikvision: {len(cameras)} cameras "
                     f"({sum(1 for c in cameras if c['online'])} online, "
                     f"{sum(1 for c in cameras if c.get('mac'))} with MAC)")

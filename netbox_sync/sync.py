@@ -174,12 +174,17 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
 
         # Cameras -> separate devices, linked to the NVR via cam_nvr.
         seen_camera_serials = set()
+        seen_camera_channels = set()
         for cam in data["cameras"]:
             serial = (cam.get("serial") or "").strip()
             if serial:
                 # what the NVR reported — independent of sync success, so a
                 # failed ensure can never cause a false offline marking
                 seen_camera_serials.add(serial)
+            if cam.get("channel") is not None:
+                # channel presence alone proves the camera is still attached —
+                # a serial fetch failure (NVR rate-limit) must never offline it
+                seen_camera_channels.add(str(cam["channel"]))
             try:
                 cam_dev = ensure_camera_device(
                     cam, nvr_name, manufacturer=cam.get("manufacturer"))
@@ -207,6 +212,8 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                 log("ERROR", f"  camera sync failed for ch{cam.get('channel')}: {e}")
 
         # Cameras no longer reported by this NVR -> offline (never deleted).
+        # "Reported" = serial seen OR channel still listed (a serial-fetch
+        # failure on a rate-limited NVR must not offline a live camera).
         try:
             for d in list(api.dcim.devices.filter(cf_cam_nvr=nvr_name,
                                                   cf_cam_enabled=True)):
@@ -214,6 +221,9 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                 # fall back to the device serial field when cam_serial unset
                 if not serial:
                     serial = (d.serial or "").strip()
+                ch = str((d.custom_fields or {}).get("cam_channel") or "")
+                if ch and ch in seen_camera_channels:
+                    continue
                 if serial and serial not in seen_camera_serials:
                     mark_camera_offline(d.id, d.name)
         except Exception as e:

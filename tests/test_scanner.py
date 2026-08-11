@@ -113,3 +113,43 @@ def test_offline_sweep_without_mfr_keeps_legacy_behavior(monkeypatch):
                             "cf_nvr_enabled", "nvr_ip", set(),
                             lambda *a: None, "Hikvision NVRs")
     assert len(calls) == 1
+
+def test_process_nvrs_sweep_keeps_camera_when_channel_still_reported(monkeypatch):
+    """Serial fetch failed (503) but the channel is still in the list ->
+    the camera must NOT be marked offline."""
+    existing = FakeRecord(5, name="C3", serial="",
+                          custom_fields={"cam_nvr": "NVR1", "cam_enabled": True,
+                                         "cam_serial": "S1", "cam_channel": 3})
+    api = _fake_api(devices=FakeEndpoint([existing]))
+    offlined = []
+    monkeypatch.setattr(sync_mod, "mark_camera_offline",
+                        lambda i, n: offlined.append((i, n)))
+    monkeypatch.setattr(sync_mod, "ensure_camera_device", lambda *a, **k: 99)
+    monkeypatch.setattr(sync_mod, "ensure_primary_ip", lambda *a, **k: None)
+
+    data = {"summary": {"name": "NVR1", "model": "M", "firmware": "F"},
+            "cameras": [{"channel": 3, "serial": None, "name": "C3",
+                         "online": True, "ip": None}]}
+    sync_mod.process_nvrs([{"ip": "10.0.0.9"}], lambda ip: data,
+                          lambda probe: 7, "Test", {}, {}, api)
+    assert offlined == []
+
+
+def test_process_nvrs_sweep_offlines_truly_missing_camera(monkeypatch):
+    """Serial not reported AND channel not listed -> offline."""
+    existing = FakeRecord(5, name="C9", serial="",
+                          custom_fields={"cam_nvr": "NVR1", "cam_enabled": True,
+                                         "cam_serial": "S9", "cam_channel": 9})
+    api = _fake_api(devices=FakeEndpoint([existing]))
+    offlined = []
+    monkeypatch.setattr(sync_mod, "mark_camera_offline",
+                        lambda i, n: offlined.append((i, n)))
+    monkeypatch.setattr(sync_mod, "ensure_camera_device", lambda *a, **k: 99)
+    monkeypatch.setattr(sync_mod, "ensure_primary_ip", lambda *a, **k: None)
+
+    data = {"summary": {"name": "NVR1", "model": "M", "firmware": "F"},
+            "cameras": [{"channel": 3, "serial": "S1", "name": "C3",
+                         "online": True, "ip": None}]}
+    sync_mod.process_nvrs([{"ip": "10.0.0.9"}], lambda ip: data,
+                          lambda probe: 7, "Test", {}, {}, api)
+    assert offlined == [(5, "C9")]
