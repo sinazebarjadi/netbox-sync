@@ -129,6 +129,16 @@ def _parse_remote_devices(text):
         })
     return cams
 
+def _try(sess, path, parser):
+    """Best-effort GET+parse: returns None on any failure. Some accounts lack
+    rights for individual magicBox actions (403 Authority:check failure) — a
+    missing cosmetic field must never sink the probe/collect."""
+    try:
+        return parser(sess.get(path))
+    except Exception as exc:
+        log("DEBUG", f"  dahua {path} failed: {exc}")
+        return None
+
 # ── probe + collect ──────────────────────────────────────────────────────────
 
 def probe_dahua(ip, retries=2, retry_delay=3):
@@ -144,8 +154,8 @@ def probe_dahua(ip, retries=2, retry_delay=3):
                 sess.get("/cgi-bin/magicBox.cgi?action=getDeviceClass"))
             if not info.get("serial") or (dev_class or "").upper() != "NVR":
                 raise RuntimeError("not a Dahua NVR (no serial/class)")
-            name = _parse_machine_name(
-                sess.get("/cgi-bin/magicBox.cgi?action=getMachineName"))
+            name = _try(sess, "/cgi-bin/magicBox.cgi?action=getMachineName",
+                        _parse_machine_name)
             return {
                 "ip":           ip,
                 "host":         f"{ip}:{DAHUA_PORT}",
@@ -155,8 +165,9 @@ def probe_dahua(ip, retries=2, retry_delay=3):
                 "reported_ip":  ip,
                 "mac":          None,
                 "manufacturer": "Dahua",
-                "firmware":     _parse_software_version(
-                    sess.get("/cgi-bin/magicBox.cgi?action=getSoftwareVersion")),
+                "firmware":     _try(sess,
+                                     "/cgi-bin/magicBox.cgi?action=getSoftwareVersion",
+                                     _parse_software_version),
             }
         except Exception:
             if attempt < retries: time.sleep(retry_delay); continue
@@ -172,10 +183,11 @@ def dahua_collect(ip):
     try:
         info = _parse_system_info(
             sess.get("/cgi-bin/magicBox.cgi?action=getSystemInfo"))
-        name = _parse_machine_name(
-            sess.get("/cgi-bin/magicBox.cgi?action=getMachineName"))
-        firmware = _parse_software_version(
-            sess.get("/cgi-bin/magicBox.cgi?action=getSoftwareVersion"))
+        name = _try(sess, "/cgi-bin/magicBox.cgi?action=getMachineName",
+                    _parse_machine_name)
+        firmware = _try(sess,
+                        "/cgi-bin/magicBox.cgi?action=getSoftwareVersion",
+                        _parse_software_version)
         remote = _parse_remote_devices(
             sess.get("/cgi-bin/configManager.cgi?action=getConfig&name=RemoteDevice"))
         try:

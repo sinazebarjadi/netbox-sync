@@ -153,3 +153,63 @@ def test_process_nvrs_sweep_offlines_truly_missing_camera(monkeypatch):
     sync_mod.process_nvrs([{"ip": "10.0.0.9"}], lambda ip: data,
                           lambda probe: 7, "Test", {}, {}, api)
     assert offlined == [(5, "C9")]
+
+# ── NVR-name uniqueness / collect retry / dahua tolerance ───────────────────
+
+def test_unique_nvr_name_generic_falls_back_to_qualified():
+    # unconfigured Hikvision deviceName is "Network Video Recorder"
+    assert sync_mod._unique_nvr_name("Network Video Recorder", None,
+                                     "172.31.20.2", "Hikvision") \
+        == "hikvision-nvr-172-31-20-2"
+    # unique names are kept
+    assert sync_mod._unique_nvr_name("NXP-NVR", None, "1.1.1.1",
+                                     "Hikvision") == "NXP-NVR"
+    # generic summary falls back to a configured hostname
+    assert sync_mod._unique_nvr_name("NVR", "site-recorder",
+                                     "1.1.1.1", "Dahua") == "site-recorder"
+
+
+def test_process_nvrs_retries_collect_once(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky_collect(ip):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient timeout")
+        return {"summary": {"name": "NVR1"}, "cameras": []}
+
+    api = _fake_api(devices=FakeEndpoint())
+    monkeypatch.setattr(sync_mod, "ensure_primary_ip", lambda *a, **k: None)
+    monkeypatch.setattr(sync_mod.time, "sleep", lambda s: None)
+    live = sync_mod.process_nvrs([{"ip": "10.0.0.9"}], flaky_collect,
+                                 lambda probe: 7, "Test", {}, {}, api)
+    assert calls["n"] == 2
+    assert live == {"10.0.0.9"}
+
+
+def test_dahua_probe_tolerates_forbidden_machine_name(monkeypatch):
+    """The Netbox account gets 403 on getMachineName — the probe must still
+    succeed with the dahua-<ip> fallback name."""
+    import netbox_sync.collectors.dahua as dahua
+
+    class _FakeSession:
+        def __init__(self, *a, **k): pass
+        def get(self, path):
+            if "getMachineName" in path:
+                import requests
+                raise requests.HTTPError("403 Authority:check failure")
+            if "getSystemInfo" in path:
+                return "serialNumber=SN1\ndeviceType=31\nupdateSerial=NVR6XX\n"
+            if "getDeviceClass" in path:
+                return "class=NVR\n"
+            if "getSoftwareVersion" in path:
+                return "version=4.0\n"
+            raise RuntimeError(path)
+        def logout(self): pass
+
+    monkeypatch.setattr(dahua, "DahuaSession", _FakeSession)
+    monkeypatch.setattr(dahua, "is_port_open", lambda *a, **k: True)
+    out = dahua.probe_dahua("192.168.252.2")
+    assert out["serial"] == "SN1"
+    assert out["hostname"] == "dahua-192-168-252-2"
+    assert out["firmware"] == "4.0"

@@ -1,5 +1,7 @@
 """run_sync: the main reconciliation job — scan, ensure devices, collect and
 sync inventory, sync SAN interfaces, then mark unreachable devices offline."""
+import time
+
 from netbox_sync.collectors.brocade import san_collect_inventory, sync_san_interfaces
 from netbox_sync.collectors.cisco import (cisco_collect_inventory,
                                           sync_cisco_interfaces,
@@ -133,6 +135,22 @@ def sync_unifi_wlans(data, console_name, desc_site_votes, site_indexes,
                 f"{len(data['sites'])} sites synced")
 
 
+# NVR names used as cam_nvr linkage keys must be unique per NVR. Hikvision
+# NVRs with an unconfigured deviceName all report "Network Video Recorder" —
+# sharing one key made each NVR's camera sweep offline the OTHER NVRs'
+# cameras (219 cameras mass-offlined on 2026-08-11).
+_GENERIC_NVR_NAMES = {"", "nvr", "network video recorder"}
+
+
+def _unique_nvr_name(raw_name, hostname, ip, family):
+    raw = (raw_name or "").strip()
+    if raw.lower() in _GENERIC_NVR_NAMES:
+        raw = (hostname or "").strip()
+    if raw.lower() in _GENERIC_NVR_NAMES:
+        raw = f"{family.lower()}-nvr-{ip.replace('.', '-')}"
+    return raw
+
+
 def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                  switch_by_ip, api):
     """Process one NVR family end to end (Hikvision / Dahua / Uniview):
@@ -145,18 +163,31 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
         live_ips.add(ip)
         log("INFO", f"Processing {family} NVR {ip}  "
                     f"({probe.get('model')} / {probe.get('serial')})")
-        try:
-            data = collect_fn(ip)
-        except KeyboardInterrupt: raise
-        except Exception as e:
-            log("ERROR", f"  {family} collection failed for {ip}: {e}"); continue
+        data = None
+        for collect_attempt in (1, 2):
+            try:
+                data = collect_fn(ip)
+                break
+            except KeyboardInterrupt: raise
+            except Exception as e:
+                if collect_attempt == 1:
+                    # flaky WAN links: probe succeeded but collect timed out —
+                    # one retry before giving up on the NVR for this run
+                    log("WARN", f"  {family} collection failed for {ip} "
+                                f"({e}) — retrying in 5s")
+                    time.sleep(5)
+                else:
+                    log("ERROR", f"  {family} collection failed for {ip}: {e}")
+        if data is None:
+            continue
 
         try:
             dev_id = ensure_fn(probe)
         except Exception as e:
             log("ERROR", f"  ensure device failed for {ip}: {e}"); continue
 
-        nvr_name = (data["summary"].get("name") or probe.get("hostname") or ip)
+        nvr_name = _unique_nvr_name(data["summary"].get("name"),
+                                    probe.get("hostname"), ip, family)
         try:
             cf = {"nvr_ip": ip, "nvr_enabled": True,
                   "nvr_model": data["summary"].get("model") or probe.get("model"),
