@@ -61,6 +61,7 @@ from netbox_sync.netbox import (get_netbox, ensure_server_device,
                                 ensure_unifi_console, get_or_create_site,
                                 sync_wireless_lans, sweep_wireless_lans,
                                 ensure_custom_fields_if_set,
+                                ensure_custom_fields,
                                 _check_offline,
                                 sync_inventory)
 from netbox_sync.scanner import scan_all
@@ -174,12 +175,14 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
         # Cameras -> separate devices, linked to the NVR via cam_nvr.
         seen_camera_serials = set()
         for cam in data["cameras"]:
+            serial = (cam.get("serial") or "").strip()
+            if serial:
+                # what the NVR reported — independent of sync success, so a
+                # failed ensure can never cause a false offline marking
+                seen_camera_serials.add(serial)
             try:
                 cam_dev = ensure_camera_device(
                     cam, nvr_name, manufacturer=cam.get("manufacturer"))
-                serial = (cam.get("serial") or "").strip()
-                if serial:
-                    seen_camera_serials.add(serial)
                 cam_iface = None
                 if mac_map:
                     try:
@@ -224,6 +227,14 @@ def run_sync():
     log("INFO", "=" * 60)
     log("INFO", "Unified sync started (servers + storage + SAN + Cisco switches)")
     log("INFO", "=" * 60)
+
+    # Custom fields MUST exist before anything runs: every lookup/sweep uses
+    # cf_* filters, and NetBox silently ignores filters on nonexistent fields
+    # (matches ALL devices — mass-offlined a fresh NetBox once).
+    try:
+        ensure_custom_fields()
+    except Exception as e:
+        log("ERROR", f"  custom-field bootstrap failed: {e}")
 
     found = scan_all()
     api = get_netbox()

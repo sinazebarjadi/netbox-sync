@@ -2016,6 +2016,59 @@ def test_camera_device_suffixed_when_name_taken_by_other_role(monkeypatch):
     assert devices_ep.created[0]["name"] == "GF-cam11"
     assert dev_id is not None
 
+
+def test_camera_update_keeps_suffix_when_plain_name_taken(monkeypatch):
+    """A serial-matched camera previously suffixed ('GF-cam11') must NOT be
+    renamed back to 'GF' while a UniFi AP holds that name — the rename 400s,
+    and the failure then cascaded into a false offline sweep."""
+    serial = "DS-2CD1143G0-I20211208AAWRJ21084215"
+    ap_dev = FakeRecord(141, name="GF", site_id=7, role_id=50)   # the UniFi AP
+    cam_dev = FakeRecord(270, name="GF-cam11", site_id=7, role_id=51,
+                         role=SimpleNamespace(name="Camera"),
+                         serial=serial,
+                         custom_fields={"cam_serial": serial})
+    devices_ep = FakeEndpoint([ap_dev, cam_dev])
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda name, color: 51)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda name: 7)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda m, mfr: 77)
+    monkeypatch.setattr(nbx, "resolve_site", lambda name, ip: "S")
+
+    cam = {"channel": 11, "name": "GF", "ip": "192.168.252.33",
+           "model": "DS-2CD1143G0-I", "serial": serial, "online": True}
+    dev_id = nbx.ensure_camera_device(cam, "dahua-192-168-252-5")
+
+    assert dev_id == 270
+    assert devices_ep.updated[-1]["name"] == "GF-cam11"   # NOT renamed to "GF"
+    assert devices_ep.created == []
+
+
+def test_camera_adoption_never_steals_other_cameras_device(monkeypatch):
+    """Name+site+role adoption must skip devices that already carry a
+    DIFFERENT cam_serial — that device belongs to another camera."""
+    other = FakeRecord(90, name="GF", site_id=7, role_id=51,
+                       serial="OTHER-SERIAL",
+                       custom_fields={"cam_serial": "OTHER-SERIAL"})
+    devices_ep = FakeEndpoint([other])
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda name, color: 51)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda name: 7)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda m, mfr: 77)
+    monkeypatch.setattr(nbx, "resolve_site", lambda name, ip: "S")
+    monkeypatch.setattr(nbx, "find_device", lambda serial, role_name=None: None)
+
+    cam = {"channel": 12, "name": "GF", "ip": "192.168.252.34",
+           "model": "DS-2CD1143G0-I", "serial": "NEW-SERIAL", "online": True}
+    dev_id = nbx.ensure_camera_device(cam, "dahua-192-168-252-5")
+
+    assert dev_id != 90                                  # not adopted
+    assert devices_ep.created[0]["name"] == "GF-cam12"   # new, suffixed
+    assert devices_ep.created[0]["serial"] == "NEW-SERIAL"
+
 # ── Custom-field UI visibility normalization ─────────────────────────────────
 
 class _FakeCFEndpoint:
@@ -2055,3 +2108,49 @@ def test_custom_fields_noop_when_all_if_set(monkeypatch):
     nbx.ensure_custom_fields_if_set()
 
     assert ep.updated == []
+
+
+def test_ensure_custom_fields_creates_missing(monkeypatch):
+    """A fresh NetBox has none of the tool's CFs: ensure_custom_fields()
+    creates them all (dcim.device, ui_visible=if-set), skips existing ones,
+    and still normalizes visibility on the rest."""
+    existing = FakeRecord(1, name="bmc_ip", ui_visible={"value": "always"})
+
+    class _CFFake:
+        def __init__(self):
+            self.created = []
+            self.updated = []
+        def all(self):
+            return [existing] + [FakeRecord(100 + i, name=p["name"],
+                                            ui_visible=p.get("ui_visible"))
+                                 for i, p in enumerate(self.created)]
+        def create(self, payload):
+            self.created.append(payload)
+            return FakeRecord(999, **payload)
+        def update(self, payload_list):
+            self.updated.extend(payload_list)
+            return True
+
+    ep = _CFFake()
+    api = SimpleNamespace(extras=SimpleNamespace(custom_fields=ep))
+    monkeypatch.setattr(nbx, "get_netbox", lambda: api)
+
+    nbx.ensure_custom_fields()
+
+    created_names = [p["name"] for p in ep.created]
+    assert len(created_names) == len(nbx.CUSTOM_FIELDS) - 1   # bmc_ip existed
+    assert "bmc_ip" not in created_names
+    for p in ep.created:
+        assert p["object_types"] == ["dcim.device"]
+        assert p["ui_visible"] == "if-set"
+        assert p["type"] in ("text", "integer", "boolean")
+    # visibility normalization still ran on the pre-existing field
+    assert {"id": 1, "ui_visible": "if-set"} in ep.updated
+
+
+def test_custom_fields_registry_sanity():
+    names = [n for n, _, _ in nbx.CUSTOM_FIELDS]
+    assert len(names) == len(set(names))            # no duplicates
+    assert all(t in ("text", "integer", "boolean")
+               for _, t, _ in nbx.CUSTOM_FIELDS)
+    assert all(label for _, _, label in nbx.CUSTOM_FIELDS)
