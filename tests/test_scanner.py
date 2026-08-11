@@ -213,3 +213,32 @@ def test_dahua_probe_tolerates_forbidden_machine_name(monkeypatch):
     assert out["serial"] == "SN1"
     assert out["hostname"] == "dahua-192-168-252-2"
     assert out["firmware"] == "4.0"
+
+def test_get_or_create_site_falls_back_to_slug(monkeypatch):
+    """'BandarAbbas' requested while 'Bandarabbas' (same slug) exists -> reuse,
+    never a slug-collision create."""
+    existing = FakeRecord(19, name="Bandarabbas", slug="bandarabbas")
+    sites_ep = FakeEndpoint([existing])
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(sites=sites_ep))
+    nbx._SITE_CACHE.clear()
+
+    assert nbx.get_or_create_site("BandarAbbas") == 19
+    assert sites_ep.created == []
+
+
+def test_hikvision_probe_qualifies_generic_devicename(monkeypatch):
+    import netbox_sync.collectors.hikvision as hk
+
+    class _FakeSession:
+        def __init__(self, *a, **k): pass
+        def get(self, path):
+            return ("<DeviceInfo><deviceName>Network Video Recorder</deviceName>"
+                    "<model>DS-9664NI-M8</model><serialNumber>SER1</serialNumber>"
+                    "</DeviceInfo>")
+        def logout(self): pass
+
+    monkeypatch.setattr(hk, "HikvisionSession", _FakeSession)
+    monkeypatch.setattr(hk, "is_port_open", lambda *a, **k: True)
+    out = hk.probe_hikvision("172.31.20.2")
+    assert out["hostname"] == "hikvision-172-31-20-2"

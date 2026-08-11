@@ -126,8 +126,21 @@ def get_or_create_site(name):
     key = name.lower()
     if key in _SITE_CACHE:
         return _SITE_CACHE[key]
-    site_id = _get_or_create(get_netbox().dcim.sites, {"name": name},
-                             {"name": name, "slug": slugify(name), "status": "active"})
+    api = get_netbox()
+    site_id = None
+    existing = api.dcim.sites.get(name=name)
+    if existing:
+        site_id = existing.id
+    else:
+        # a site with a different name-casing but the same slug may already
+        # exist ("Bandarabbas" vs "BandarAbbas") — reuse it instead of
+        # failing the create on the unique slug
+        by_slug = api.dcim.sites.get(slug=slugify(name))
+        if by_slug:
+            site_id = by_slug.id
+        else:
+            site_id = api.dcim.sites.create(
+                {"name": name, "slug": slugify(name), "status": "active"}).id
     _SITE_CACHE[key] = site_id
     return site_id
 

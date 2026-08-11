@@ -108,6 +108,17 @@ def _parse_channel_status(xml_text):
     return status
 
 
+def _unique_hostname(name, ip):
+    """An unconfigured Hikvision deviceName reads 'Network Video Recorder' —
+    identical across NVRs, which collapses same-site NVRs into one NetBox
+    device (name adoption) and breaks cam_nvr linkage. Qualify generic names
+    with the IP."""
+    n = (name or "").strip()
+    if n.lower() in ("", "nvr", "network video recorder"):
+        return f"hikvision-{ip.replace('.', '-')}"
+    return n
+
+
 # ── probe / collect ──────────────────────────────────────────────────────────
 
 def probe_hikvision(ip, retries=2, retry_delay=3):
@@ -125,7 +136,7 @@ def probe_hikvision(ip, retries=2, retry_delay=3):
                 "host":         f"{ip}:{HIKVISION_PORT}",
                 "serial":       info.get("serial"),
                 "model":        info.get("model"),
-                "hostname":     info.get("name") or f"nvr-{ip.replace('.', '-')}",
+                "hostname":     _unique_hostname(info.get("name"), ip),
                 "reported_ip":  ip,
                 "mac":          info.get("mac"),
                 "manufacturer": "Hikvision",
