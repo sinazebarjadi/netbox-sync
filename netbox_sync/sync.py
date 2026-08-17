@@ -179,6 +179,21 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                 else:
                     log("ERROR", f"  {family} collection failed for {ip}: {e}")
         if data is None:
+            # collection failed (restricted account, flaky link, ...), but the
+            # probe succeeded — still ensure the NVR device itself so it shows
+            # up in NetBox; cameras sync on a later successful run. The camera
+            # sweep stays safe: no channel/serial evidence => it skips.
+            try:
+                dev_id = ensure_fn(probe)
+                cf = {"nvr_ip": ip, "nvr_enabled": True,
+                      "nvr_model": probe.get("model"),
+                      "nvr_firmware": probe.get("firmware")}
+                api.dcim.devices.update([{"id": dev_id, "status": "active",
+                                          "custom_fields": cf}])
+                nvr_name = _unique_nvr_name(None, probe.get("hostname"), ip, family)
+                ensure_primary_ip(dev_id, ip, nvr_name)
+            except Exception as e:
+                log("ERROR", f"  ensure device failed for {ip}: {e}")
             continue
 
         try:

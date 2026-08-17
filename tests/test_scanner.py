@@ -156,6 +156,31 @@ def test_process_nvrs_sweep_offlines_truly_missing_camera(monkeypatch):
 
 # ── NVR-name uniqueness / collect retry / dahua tolerance ───────────────────
 
+def test_process_nvrs_collect_failure_still_creates_nvr(monkeypatch):
+    """Probe succeeded but collection failed (restricted account / 403):
+    the NVR device must still be ensured, with no camera work at all."""
+    ensured = []
+    updated = []
+    api = _fake_api(devices=FakeEndpoint([]))
+    monkeypatch.setattr(sync_mod, "ensure_primary_ip", lambda *a, **k: None)
+    monkeypatch.setattr(sync_mod, "ensure_camera_device",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    api.dcim.devices.update = lambda rows: updated.extend(rows)
+
+    def collect(ip):
+        raise RuntimeError("403 Forbidden")
+
+    sync_mod.process_nvrs(
+        [{"ip": "10.0.0.66", "model": "NVR4X", "firmware": "1.0",
+          "hostname": "dahua-10-0-0-66"}],
+        collect, lambda probe: ensured.append(probe) or 7,
+        "Dahua", {}, {}, api)
+    assert ensured and ensured[0]["ip"] == "10.0.0.66"
+    assert updated and updated[0]["status"] == "active"
+    assert updated[0]["custom_fields"]["nvr_ip"] == "10.0.0.66"
+
+
+
 def test_unique_nvr_name_generic_falls_back_to_qualified():
     # unconfigured Hikvision deviceName is "Network Video Recorder"
     assert sync_mod._unique_nvr_name("Network Video Recorder", None,
