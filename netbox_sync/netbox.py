@@ -250,6 +250,23 @@ def ensure_server_device(probe):
         cands = list(api.dcim.devices.filter(name=name, site_id=site_id, role_id=role_id))
         dev = next((c for c in cands if not (c.custom_fields or {}).get("storage_ip")), None)
         if dev: log("INFO", f"  Found server by name+site: {name} (id={dev.id})")
+    # Tertiary, blank-serial servers only: the iLO IP and hostname are the
+    # only stable identities such a box has — match them across ALL sites so
+    # a site-map or hostname drift can never spawn a duplicate.
+    if dev is None and _invalid_serial(serial):
+        servers = [d for d in api.dcim.devices.filter(role_id=role_id)
+                   if not (d.custom_fields or {}).get("storage_ip")]
+        dev = next((d for d in servers if str((d.custom_fields or {})
+                                              .get("bmc_ip") or "")
+                    .split("/")[0].strip() == probe["ip"]), None)
+        if dev:
+            log("INFO", f"  Found server by BMC IP {probe['ip']}: "
+                        f"{dev.name} (id={dev.id})")
+        else:
+            named = [d for d in servers if d.name == name]
+            if len(named) == 1:
+                dev = named[0]
+                log("INFO", f"  Found server by name+role: {name} (id={dev.id})")
     if dev:
         api.dcim.devices.update([{
             "id": dev.id, "name": name, "status": "active",

@@ -170,6 +170,67 @@ def test_sync_inventory_single_fetch_and_no_per_item_get(monkeypatch):
     assert len(filter_calls) == 1
 
 
+# ── ensure_server_device blank-serial adoption (no duplicates) ───────────────
+
+def _server_probe(**over):
+    p = {"serial": "", "manufacturer": "HPE", "hostname": "Afra-Host-06",
+         "ip": "192.168.19.43", "model": "ProLiant DL380 Gen9"}
+    p.update(over)
+    return p
+
+
+def _patch_server_helpers(monkeypatch, devices_ep):
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda n: 5)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda n, *a: 7)
+    monkeypatch.setattr(nbx, "resolve_site", lambda hn, ip: "NewSite")
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda n: 33)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a: 44)
+
+
+def test_blank_serial_server_adopted_by_bmc_ip(monkeypatch):
+    """Hostname AND site both changed, serial blank: the BMC IP is the only
+    stable identity — the existing device must be adopted, not duplicated."""
+    existing = FakeRecord(11, name="old-hostname", role_id=7, site_id=99,
+                          serial="", custom_fields={"bmc_ip": "192.168.19.43"})
+    ep = FakeEndpoint([existing])
+    _patch_server_helpers(monkeypatch, ep)
+
+    dev_id = nbx.ensure_server_device(_server_probe())
+    assert dev_id == 11
+    assert ep.create_calls == 0
+    assert ep.updated and ep.updated[0]["site"] == 33  # moved to current site
+
+
+def test_blank_serial_server_adopted_by_name_any_site(monkeypatch):
+    """Site mapping drifted (Default vs Afranet): same name+role elsewhere is
+    adopted instead of creating a duplicate."""
+    existing = FakeRecord(12, name="Afra-Host-06", role_id=7, site_id=99,
+                          serial="", custom_fields={"bmc_ip": "10.9.9.9"})
+    ep = FakeEndpoint([existing])
+    _patch_server_helpers(monkeypatch, ep)
+
+    dev_id = nbx.ensure_server_device(_server_probe())
+    assert dev_id == 12
+    assert ep.create_calls == 0
+
+
+def test_blank_serial_server_ambiguous_name_creates(monkeypatch):
+    """Two different-site devices share the name and no BMC IP matches —
+    ambiguous, so a new device is created rather than merging blindly."""
+    ep = FakeEndpoint([
+        FakeRecord(13, name="Afra-Host-06", role_id=7, site_id=1,
+                   serial="", custom_fields={"bmc_ip": "10.1.1.1"}),
+        FakeRecord(14, name="Afra-Host-06", role_id=7, site_id=2,
+                   serial="", custom_fields={"bmc_ip": "10.2.2.2"}),
+    ])
+    _patch_server_helpers(monkeypatch, ep)
+
+    nbx.ensure_server_device(_server_probe())
+    assert ep.create_calls == 1
+
+
 # ── inventory item role resolution ───────────────────────────────────────────
 
 def _roles_endpoint():
