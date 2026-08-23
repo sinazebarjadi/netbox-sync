@@ -6,7 +6,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![NetBox](https://img.shields.io/badge/netbox-4.x-blueviolet)
-![Tests](https://img.shields.io/badge/tests-225%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-236%20passing-brightgreen)
 ![Device families](https://img.shields.io/badge/device%20families-10-orange)
 
 Servers · Storage · SAN & LAN switches · Firewalls · Wireless · NVRs · **every camera** — devices, interfaces, VLANs, IPAM, cables, and hardware inventory.
