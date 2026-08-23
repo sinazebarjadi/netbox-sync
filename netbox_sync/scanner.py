@@ -18,6 +18,7 @@ from netbox_sync.config import (BMC_RANGES, STORAGE_RANGES, SAN_RANGES,
                                 DAHUA_RANGES, UNV_RANGES,
                                 SCAN_WORKERS, log)
 from netbox_sync.utils import expand_ranges
+from netbox_sync.report import classify_error, record_probe_failure
 
 
 def _drain_pool(ex, futures, on_hit):
@@ -26,8 +27,18 @@ def _drain_pool(ex, futures, on_hit):
     (up to ~20s of port-timeout retries each) finish in the background."""
     try:
         for f in as_completed(futures):
-            r = f.result()
-            if r: on_hit(r)
+            try:
+                r = f.result()
+            except KeyboardInterrupt:
+                ex.shutdown(wait=False, cancel_futures=True)
+                raise
+            except Exception as exc:
+                record_probe_failure(
+                    on_hit.__family__, futures[f], "no data",
+                    classify_error(exc))
+            else:
+                if r:
+                    on_hit(r)
     except KeyboardInterrupt:
         ex.shutdown(wait=False, cancel_futures=True)
         raise
@@ -48,6 +59,7 @@ def scan_all():
         def _on_server(r):
             log("INFO", f"  + SERVER {r['ip']}  {r['model']}  s/n={r['serial']}")
             all_found["servers"].append(r)
+        _on_server.__family__ = "Server"
         _drain_pool(ex, futures, _on_server)
         log("INFO", f"Server scan done: {len(all_found['servers'])} found.")
     else:
@@ -67,6 +79,7 @@ def scan_all():
         def _on_storage(r):
             log("INFO", f"  + STORAGE {r['ip']}  {r['model']}  s/n={r['serial']}")
             all_found["storage"].append(r)
+        _on_storage.__family__ = "Storage"
         _drain_pool(ex, futures, _on_storage)
         log("INFO", f"Storage scan done: {len(all_found['storage'])} found.")
     else:
@@ -86,6 +99,7 @@ def scan_all():
         def _on_san(r):
             log("INFO", f"  + SAN {r['ip']}  {r.get('model')}  wwn={r.get('wwn')}")
             all_found["san_switches"].append(r)
+        _on_san.__family__ = "SAN switch"
         _drain_pool(ex, futures, _on_san)
         log("INFO", f"SAN switch scan done: {len(all_found['san_switches'])} found.")
     else:
@@ -106,6 +120,7 @@ def scan_all():
             def _on_cisco(r):
                 log("INFO", f"  + CISCO {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["cisco_switches"].append(r)
+            _on_cisco.__family__ = "Cisco switch"
             _drain_pool(ex, futures, _on_cisco)
             log("INFO", f"Cisco scan done: {len(all_found['cisco_switches'])} found.")
         else:
@@ -128,6 +143,7 @@ def scan_all():
             def _on_fg(r):
                 log("INFO", f"  + FORTIGATE {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["fortigates"].append(r)
+            _on_fg.__family__ = "FortiGate"
             _drain_pool(ex, futures, _on_fg)
             log("INFO", f"FortiGate scan done: {len(all_found['fortigates'])} found.")
         else:
@@ -147,6 +163,7 @@ def scan_all():
             def _on_ruckus(r):
                 log("INFO", f"  + RUCKUS {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["ruckus"].append(r)
+            _on_ruckus.__family__ = "Ruckus"
             _drain_pool(ex, futures, _on_ruckus)
             log("INFO", f"Ruckus scan done: {len(all_found['ruckus'])} found.")
         else:
@@ -169,6 +186,7 @@ def scan_all():
             def _on_unifi(r):
                 log("INFO", f"  + UNIFI {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["unifi"].append(r)
+            _on_unifi.__family__ = "UniFi console"
             _drain_pool(ex, futures, _on_unifi)
             log("INFO", f"UniFi scan done: {len(all_found['unifi'])} found.")
         else:
@@ -190,6 +208,7 @@ def scan_all():
             def _on_dahua(r):
                 log("INFO", f"  + DAHUA {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["dahua_nvrs"].append(r)
+            _on_dahua.__family__ = "Dahua NVR"
             _drain_pool(ex, futures, _on_dahua)
             log("INFO", f"Dahua scan done: {len(all_found['dahua_nvrs'])} found.")
         else:
@@ -212,6 +231,7 @@ def scan_all():
             def _on_unv(r):
                 log("INFO", f"  + UNV {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["unv_nvrs"].append(r)
+            _on_unv.__family__ = "Uniview NVR"
             _drain_pool(ex, futures, _on_unv)
             log("INFO", f"Uniview scan done: {len(all_found['unv_nvrs'])} found.")
         else:
@@ -234,6 +254,7 @@ def scan_all():
             def _on_nvr(r):
                 log("INFO", f"  + NVR {r['ip']}  {r['model']}  s/n={r['serial']}")
                 all_found["hikvision_nvrs"].append(r)
+            _on_nvr.__family__ = "Hikvision NVR"
             _drain_pool(ex, futures, _on_nvr)
             log("INFO", f"Hikvision scan done: {len(all_found['hikvision_nvrs'])} found.")
         else:

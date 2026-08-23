@@ -11,7 +11,8 @@ from netbox_sync.config import (SWITCH_USER, SWITCH_PASS, SWITCH_PORT,
 from netbox_sync.models import SWITCH_MODEL_MAP
 from netbox_sync.netbox import get_or_create_inventory_role
 from netbox_sync.utils import (normalize_model, _invalid_serial,
-                               _make_add_item, is_port_open)
+                                _make_add_item, is_port_open)
+from netbox_sync.report import classify_error, record_probe_failure
 
 
 class BrocadeSwitchSession:
@@ -252,6 +253,8 @@ def probe_san_switch(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, SWITCH_PORT):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("SAN switch", ip, "unreachable",
+                                 f"port {SWITCH_PORT} closed or timed out")
             return None
         sess = BrocadeSwitchSession(ip, SWITCH_PORT)
         try:
@@ -259,6 +262,8 @@ def probe_san_switch(ip, retries=2, retry_delay=3):
             sw = sess.run("switchshow")
             if not sw:
                 if attempt < retries: time.sleep(retry_delay); continue
+                record_probe_failure("SAN switch", ip, "no data",
+                                     "switchshow returned no data")
                 return None
             headers, _ = _parse_switchshow(sw)
             ver = sess.run("version")
@@ -290,8 +295,9 @@ def probe_san_switch(ip, retries=2, retry_delay=3):
                 "wwn":          wwn,
                 "firmware":     fw,
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("SAN switch", ip, "no data", classify_error(exc))
             return None
         finally:
             try: sess.logout()

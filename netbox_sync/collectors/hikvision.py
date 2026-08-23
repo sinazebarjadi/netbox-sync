@@ -10,6 +10,7 @@ from requests.auth import HTTPDigestAuth
 from netbox_sync.config import (HIKVISION_USER, HIKVISION_PASS, HIKVISION_PORT,
                                 log)
 from netbox_sync.utils import is_port_open
+from netbox_sync.report import classify_error, record_probe_failure
 
 _ISAPI_NS = "http://www.isapi.org/ver20/XMLSchema"
 
@@ -125,6 +126,8 @@ def probe_hikvision(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, HIKVISION_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Hikvision NVR", ip, "unreachable",
+                                 f"port {HIKVISION_PORT} closed or timed out")
             return None
         sess = HikvisionSession(ip)
         try:
@@ -142,8 +145,9 @@ def probe_hikvision(ip, retries=2, retry_delay=3):
                 "manufacturer": "Hikvision",
                 "firmware":     info.get("firmware"),
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Hikvision NVR", ip, "no data", classify_error(exc))
             return None
         finally:
             try: sess.logout()

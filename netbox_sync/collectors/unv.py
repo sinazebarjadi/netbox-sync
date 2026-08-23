@@ -17,6 +17,7 @@ from requests.exceptions import ChunkedEncodingError
 
 from netbox_sync.config import UNV_USER, UNV_PASS, UNV_PORT, log
 from netbox_sync.utils import is_port_open
+from netbox_sync.report import classify_error, record_probe_failure
 
 # ── session ──────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,8 @@ def probe_unv(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, UNV_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Uniview NVR", ip, "unreachable",
+                                 f"port {UNV_PORT} closed or timed out")
             return None
         sess = UnvSession(ip)
         try:
@@ -133,8 +136,9 @@ def probe_unv(ip, retries=2, retry_delay=3):
                 "manufacturer": "Uniview",
                 "firmware":     info.get("firmware"),
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Uniview NVR", ip, "no data", classify_error(exc))
             return None
         finally:
             sess.logout()

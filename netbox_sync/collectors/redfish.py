@@ -9,8 +9,9 @@ from netbox_sync.netbox import get_or_create_inventory_role
 from netbox_sync.utils import (normalize_model, gib_from_bytes, _to_int,
                                _capacity_to_bytes, _pick, _make_add_item,
                                _get_location, _get_oem, _chassis_url,
-                               is_port_open, name_cpu, name_ram, name_disk,
-                               name_psu, name_nic, name_hba, is_ssd)
+                                is_port_open, name_cpu, name_ram, name_disk,
+                                name_psu, name_nic, name_hba, is_ssd)
+from netbox_sync.report import classify_error, record_probe_failure
 
 
 class RedfishSession:
@@ -79,6 +80,8 @@ def probe_redfish(ip, retries=3, retry_delay=5):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, REDFISH_PORT):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Server", ip, "unreachable",
+                                 f"port {REDFISH_PORT} closed or timed out")
             return None
         host = f"{ip}:{REDFISH_PORT}"
         try:
@@ -99,8 +102,9 @@ def probe_redfish(ip, retries=3, retry_delay=5):
                 }
             finally:
                 rf.logout()
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Server", ip, "no data", classify_error(exc))
     return None
 
 

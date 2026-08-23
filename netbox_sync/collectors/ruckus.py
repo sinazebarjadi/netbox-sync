@@ -8,6 +8,7 @@ import paramiko
 from netbox_sync.config import (RUCKUS_USER, RUCKUS_PASS, RUCKUS_PORT,
                                 RUCKUS_HA_MAP, log)
 from netbox_sync.utils import is_port_open
+from netbox_sync.report import classify_error, record_probe_failure
 
 # ── HA map ───────────────────────────────────────────────────────────────────
 
@@ -171,6 +172,8 @@ def probe_ruckus(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, RUCKUS_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Ruckus", ip, "unreachable",
+                                 f"port {RUCKUS_PORT} closed or timed out")
             return None
         sess = RuckusSession(ip)
         try:
@@ -273,6 +276,8 @@ def ruckus_collect(ip):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, RUCKUS_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Ruckus", ip, "unreachable",
+                                 f"port {RUCKUS_PORT} closed or timed out")
             return None
         sess = RuckusSession(ip)
         try:
@@ -291,8 +296,9 @@ def ruckus_collect(ip):
                 "manufacturer": "Ruckus",
                 "firmware": info.get("version"),
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Ruckus", ip, "no data", classify_error(exc))
             return None
         finally:
             try: sess.logout()

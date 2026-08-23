@@ -8,6 +8,7 @@ import urllib3
 
 from netbox_sync.config import (UNIFI_USER, UNIFI_PASS, UNIFI_PORT, log)
 from netbox_sync.utils import is_port_open
+from netbox_sync.report import classify_error, record_probe_failure
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -162,10 +163,14 @@ def probe_unifi(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, UNIFI_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("UniFi console", ip, "unreachable",
+                                 f"port {UNIFI_PORT} closed or timed out")
             return None
         st = _status(ip, UNIFI_PORT)
         if not st:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("UniFi console", ip, "no data",
+                                 "status API did not report a running console")
             return None
         sess = UniFiSession(ip)
         try:
@@ -173,6 +178,8 @@ def probe_unifi(ip, retries=2, retry_delay=3):
                 sess.login()
             except RuntimeError as exc:     # auth/api rejection — not transient
                 log("WARN", f"  {exc} — skipping {ip}")
+                record_probe_failure("UniFi console", ip, "no data",
+                                     classify_error(exc))
                 return None
             hostname = f"unifi-{ip.replace('.', '-')}"
             try:
@@ -193,8 +200,9 @@ def probe_unifi(ip, retries=2, retry_delay=3):
                 "manufacturer": "Ubiquiti",
                 "firmware": st.get("server_version"),
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("UniFi console", ip, "no data", classify_error(exc))
             return None
         finally:
             try: sess.logout()

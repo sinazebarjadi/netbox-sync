@@ -11,7 +11,8 @@ from netbox_sync.config import (FORTIGATE_USER, FORTIGATE_PASS, FORTIGATE_PORT,
                                 FORTIGATE_SSH_PORT, log)
 from netbox_sync.models import FORTIGATE_MODEL_MAP
 from netbox_sync.utils import (normalize_model, _invalid_serial,
-                               _make_add_item, is_port_open)
+                                _make_add_item, is_port_open)
+from netbox_sync.report import classify_error, record_probe_failure
 
 class FortiGateAuthError(RuntimeError):
     """Session login rejected / not honored — credentials wrong."""
@@ -299,6 +300,8 @@ def probe_fortigate(ip, retries=2, retry_delay=3):
         # One quick port check is enough for dead IPs (same reasoning as Cisco)
         if not is_port_open(ip, port, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("FortiGate", ip, "unreachable",
+                                 f"port {port} closed or timed out")
             return None
         try:
             status = _fg_status(
@@ -317,9 +320,11 @@ def probe_fortigate(ip, retries=2, retry_delay=3):
             }
         except FortiGateAuthError:
             log("WARN", f"  FortiGate {ip}: auth rejected — skipping")
+            record_probe_failure("FortiGate", ip, "no data", "authentication failure")
             return None
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("FortiGate", ip, "no data", classify_error(exc))
             return None
     return None
 

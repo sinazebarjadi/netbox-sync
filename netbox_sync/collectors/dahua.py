@@ -15,6 +15,7 @@ from requests.auth import HTTPDigestAuth
 
 from netbox_sync.config import DAHUA_USER, DAHUA_PASS, DAHUA_PORT, log
 from netbox_sync.utils import is_port_open
+from netbox_sync.report import classify_error, record_probe_failure
 
 # ── session ──────────────────────────────────────────────────────────────────
 
@@ -145,6 +146,8 @@ def probe_dahua(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, DAHUA_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Dahua NVR", ip, "unreachable",
+                                 f"port {DAHUA_PORT} closed or timed out")
             return None
         sess = DahuaSession(ip)
         try:
@@ -169,8 +172,9 @@ def probe_dahua(ip, retries=2, retry_delay=3):
                                      "/cgi-bin/magicBox.cgi?action=getSoftwareVersion",
                                      _parse_software_version),
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Dahua NVR", ip, "no data", classify_error(exc))
             return None
         finally:
             sess.logout()

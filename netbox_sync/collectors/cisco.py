@@ -10,7 +10,8 @@ from netbox_sync import netbox
 from netbox_sync.config import (CISCO_USER, CISCO_PASS, CISCO_PORT, log)
 from netbox_sync.models import CISCO_MODEL_MAP
 from netbox_sync.utils import (normalize_model, _invalid_serial,
-                               _make_add_item, is_port_open)
+                                _make_add_item, is_port_open)
+from netbox_sync.report import classify_error, record_probe_failure
 
 # ── CLI output parsers ───────────────────────────────────────────────────────
 
@@ -349,6 +350,8 @@ def probe_cisco_switch(ip, retries=2, retry_delay=3):
         # fast and definitively); OFFLINE_THRESHOLD covers transient drops.
         if not is_port_open(ip, CISCO_PORT, timeout=3, retries=1):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Cisco switch", ip, "unreachable",
+                                 f"port {CISCO_PORT} closed or timed out")
             return None
         sess = CiscoSwitchSession(ip)
         try:
@@ -371,8 +374,9 @@ def probe_cisco_switch(ip, retries=2, retry_delay=3):
                 }
             finally:
                 sess.logout()
-        except Exception:
+        except Exception as exc:
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Cisco switch", ip, "no data", classify_error(exc))
             return None
     return None
 

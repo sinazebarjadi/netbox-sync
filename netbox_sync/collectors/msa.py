@@ -15,7 +15,8 @@ from netbox_sync.netbox import get_or_create_inventory_role
 from netbox_sync.utils import (normalize_model, gib_from_bytes, _make_add_item,
                                is_port_open, parse_storage_size_bytes,
                                is_ssd_storage, name_storage_disk,
-                               name_storage_psu, name_storage_controller)
+                                name_storage_psu, name_storage_controller)
+from netbox_sync.report import classify_error, record_probe_failure
 
 
 class _LegacyTLSAdapter(HTTPAdapter):
@@ -182,10 +183,14 @@ def probe_storage(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, STORAGE_PORT):
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Storage", ip, "unreachable",
+                                 f"port {STORAGE_PORT} closed or timed out")
             return None
         storage = StorageSession(ip, STORAGE_PORT)
         if not storage.quick_probe():
             if attempt < retries: time.sleep(retry_delay); continue
+            record_probe_failure("Storage", ip, "no data",
+                                 "storage API probe failed (authentication or API error)")
             return None
         try:
             storage.login()
@@ -211,9 +216,10 @@ def probe_storage(ip, retries=2, retry_delay=3):
                 "health":       system.get("health"),
                 "firmware":     firmware,
             }
-        except Exception:
+        except Exception as exc:
             if attempt < retries:
                 time.sleep(retry_delay); continue
+            record_probe_failure("Storage", ip, "no data", classify_error(exc))
             return None
         finally:
             try: storage.logout()

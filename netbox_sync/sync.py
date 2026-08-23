@@ -35,9 +35,11 @@ from netbox_sync.collectors.ruckus import (ruckus_collect, probe_ruckus,
                                            _parse_ha_map)
 from netbox_sync.collectors.unifi import unifi_collect
 from netbox_sync.config import (log, BMC_RANGES, STORAGE_RANGES, SAN_RANGES,
-                                CISCO_RANGES, FORTIGATE_RANGES, RUCKUS_RANGES,
-                                RUCKUS_HA_MAP, HIKVISION_RANGES, UNIFI_RANGES,
-                                DAHUA_RANGES, UNV_RANGES)
+                                 CISCO_RANGES, FORTIGATE_RANGES, RUCKUS_RANGES,
+                                 RUCKUS_HA_MAP, HIKVISION_RANGES, UNIFI_RANGES,
+                                 DAHUA_RANGES, UNV_RANGES)
+from netbox_sync.report import (classify_error, clear as clear_scan_report,
+                                print_summary, record_processing_failure)
 from netbox_sync.ipam import (_prefix_from_ip, _iface_addr_with_prefixlen,
                               ensure_prefix, ensure_host_ip,
                               _containing_prefix, _prefix_masklen,
@@ -171,13 +173,15 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
             except KeyboardInterrupt: raise
             except Exception as e:
                 if collect_attempt == 1:
-                    # flaky WAN links: probe succeeded but collect timed out —
+                    # flaky WAN links: probe succeeded but collect timed out -
                     # one retry before giving up on the NVR for this run
                     log("WARN", f"  {family} collection failed for {ip} "
-                                f"({e}) — retrying in 5s")
+                                f"({e}) - retrying in 5s")
                     time.sleep(5)
                 else:
                     log("ERROR", f"  {family} collection failed for {ip}: {e}")
+                    record_processing_failure(f"{family} NVR", ip,
+                                              classify_error(e))
         if data is None:
             # collection failed (restricted account, flaky link, ...), but the
             # probe succeeded — still ensure the NVR device itself so it shows
@@ -194,6 +198,7 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                 ensure_primary_ip(dev_id, ip, nvr_name)
             except Exception as e:
                 log("ERROR", f"  ensure device failed for {ip}: {e}")
+                record_processing_failure(f"{family} NVR", ip, classify_error(e))
             continue
 
         try:
@@ -292,6 +297,7 @@ def run_sync():
     except Exception as e:
         log("ERROR", f"  custom-field bootstrap failed: {e}")
 
+    clear_scan_report()
     found = scan_all()
     api = get_netbox()
 
@@ -1107,6 +1113,7 @@ def run_sync():
 
     log("INFO", "Unified sync complete")
     log("INFO", "=" * 60)
+    print_summary(found)
 
 
 def _offline_sweep(api, enabled, cf_field, ip_field, live_ips, mark_fn, label,
