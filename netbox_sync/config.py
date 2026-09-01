@@ -51,6 +51,10 @@ DAHUA_PASS = os.getenv("DAHUA_PASS")
 UNV_USER = os.getenv("UNV_USER")
 UNV_PASS = os.getenv("UNV_PASS")
 
+# ManageEngine AssetExplorer (offline/inventory asset source, opt-in)
+AE_URL     = os.getenv("AE_URL")        # e.g. https://172.31.5.155
+AE_API_KEY = os.getenv("AE_API_KEY")    # technician API key
+
 REQUIRED_ENV_VARS = ("NETBOX_URL", "NETBOX_TOKEN",
                      "REDFISH_USER", "REDFISH_PASS",
                      "STORAGE_USER", "STORAGE_PASS",
@@ -88,6 +92,9 @@ def _validate_config():
     if os.getenv("UNV_RANGES") and (not os.getenv("UNV_USER")
                                     or not os.getenv("UNV_PASS")):
         missing.append("UNV_USER/UNV_PASS (required when UNV_RANGES is set)")
+    # AssetExplorer sync is opt-in; both settings required together.
+    if bool(os.getenv("AE_URL")) != bool(os.getenv("AE_API_KEY")):
+        missing.append("AE_URL and AE_API_KEY must be set together")
     if missing:
         raise RuntimeError(f"Missing required .env variables: {', '.join(missing)}")
 

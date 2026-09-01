@@ -45,6 +45,16 @@ def _get_or_create(endpoint, lookup, create):
     if obj: return obj.id
     return endpoint.create(create).id
 
+def _safe_slug(name):
+    """slugify() drops all non-ASCII chars — a Persian/Arabic name yields an
+    empty string, which NetBox rejects ('slug may not be blank'). Fall back to
+    a deterministic hash-based slug so such names still create/reuse cleanly."""
+    s = slugify(name)
+    if s:
+        return s
+    import hashlib
+    return "x" + hashlib.md5(str(name).encode("utf-8")).hexdigest()[:10]
+
 def get_or_create_manufacturer(name):
     if not name: return None
     name = name.strip()
@@ -63,7 +73,7 @@ def _resolve_manufacturer(name):
     if m: return m.id
     # Secondary lookup by slug (handles pre-existing manufacturers with
     # different casing or a manually-set slug)
-    slug = slugify(name)
+    slug = _safe_slug(name)
     try:
         m = api.dcim.manufacturers.get(slug=slug)
         if m: return m.id
@@ -87,7 +97,8 @@ def get_or_create_device_type(model, mfr_id, model_map=None):
     if key in _DEVICE_TYPE_CACHE:
         return _DEVICE_TYPE_CACHE[key]
     dt_id = _get_or_create(get_netbox().dcim.device_types, {"model": m},
-                           {"model": m, "slug": slugify(m), "manufacturer": mfr_id})
+                           {"model": m, "slug": _safe_slug(m),
+                            "manufacturer": mfr_id})
     _DEVICE_TYPE_CACHE[key] = dt_id
     return dt_id
 
@@ -135,12 +146,12 @@ def get_or_create_site(name):
         # a site with a different name-casing but the same slug may already
         # exist ("Bandarabbas" vs "BandarAbbas") — reuse it instead of
         # failing the create on the unique slug
-        by_slug = api.dcim.sites.get(slug=slugify(name))
+        by_slug = api.dcim.sites.get(slug=_safe_slug(name))
         if by_slug:
             site_id = by_slug.id
         else:
             site_id = api.dcim.sites.create(
-                {"name": name, "slug": slugify(name), "status": "active"}).id
+                {"name": name, "slug": _safe_slug(name), "status": "active"}).id
     _SITE_CACHE[key] = site_id
     return site_id
 
@@ -549,6 +560,12 @@ def ensure_ap_device(ap, wlc_name, role_name=None, manufacturer="Ruckus",
             "wap_wlc":    wlc_name,
         },
     }
+    if ap.get("serial") and not _invalid_serial(ap["serial"]):
+        payload["serial"] = ap["serial"].strip()
+    elif (manufacturer or "").lower() == "ubiquiti":
+        # UniFi APs expose no real serial via the controller API — derive it
+        # from the MAC (colons stripped) so NetBox matches AE records.
+        payload["serial"] = mac.replace(":", "").lower()
     if dev:
         api.dcim.devices.update([{"id": dev.id, **payload}])
         return dev.id
@@ -924,6 +941,10 @@ CUSTOM_FIELDS = [
     ("unifi_version",             "text",    "UniFi OS version"),
     ("unifi_ap_count",            "integer", "Number of managed APs"),
     ("unifi_sites",               "integer", "Number of sites"),
+    # AssetExplorer (offline/inventory assets, AE-managed)
+    ("ae_asset_id",               "text",    "AssetExplorer asset ID"),
+    ("ae_department",             "text",    "Department (AssetExplorer)"),
+    ("ae_location",               "text",    "Location (AssetExplorer)"),
 ]
 
 
