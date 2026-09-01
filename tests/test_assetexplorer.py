@@ -421,6 +421,115 @@ def test_serial_less_and_nameless_match_skips_cleanly(monkeypatch):
     assert ep.create_calls == 0 and ep.update_calls == 0
 
 
+# ── serial-conflict: stale serial on the wrong-named device ─────────────────
+
+def test_serial_held_by_different_name_uses_name_fallback(monkeypatch, capsys):
+    """NetBox has serial MXQ714055Z on 'Afra-Host-101' but AE says that serial
+    belongs to 'AFRA-HOST-103'. Must NOT update Afra-Host-101's tag; must
+    fall through to name matching and find the real AFRA-HOST-103."""
+    wrong = FakeRecord(1, name="Afra-Host-101", serial="MXQ714055Z",
+                       asset_tag="41510149",
+                       site=SimpleNamespace(name="Afranet"), custom_fields={})
+    right = FakeRecord(2, name="Afra-Host-103", serial="", asset_tag=None,
+                       site=SimpleNamespace(name="Afranet"), custom_fields={})
+    ep = FakeEndpoint([wrong, right])
+    _patch_helpers(monkeypatch, ep)
+    # AE has BOTH records — that's how the stale serial is detected
+    rec_wrong = _normalize(_asset(name="AFRA-HOST-101", org_serial_number="USE6287HAY",
+                                  asset_tag="41510149"))
+    rec_right = _normalize(_asset(name="AFRA-HOST-103", org_serial_number="MXQ714055Z",
+                                  asset_tag="41510148"))
+    _patch_fetch(monkeypatch, [rec_wrong, rec_right])
+    ae_sync.sync_assetexplorer()
+    # wrong device untouched
+    assert not any(u.get("id") == 1 for u in ep.updated)
+    # right device got the tag + serial repair
+    upd = [u for u in ep.updated if u.get("id") == 2]
+    assert upd and any(u.get("asset_tag") == "41510148" for u in upd)
+    assert any(u.get("serial") == "MXQ714055Z" for u in upd)
+    assert "held by" in capsys.readouterr().out
+
+
+def test_serial_conflict_warns_and_does_not_hijack(monkeypatch, capsys):
+    """AE says serial X belongs to name A, but NetBox has serial X on name B
+    and AE also has name B with a DIFFERENT serial -> stale serial in NetBox.
+    The tag for name A must NOT be written to device B."""
+    wrong = FakeRecord(1, name="Afra-Host-101", serial="MXQ714055Z",
+                       asset_tag="41510149",
+                       site=SimpleNamespace(name="Afranet"), custom_fields={})
+    ep = FakeEndpoint([wrong])
+    _patch_helpers(monkeypatch, ep)
+    # AE: AFRA-HOST-101 has serial USE6287HAY (the real one), and
+    #     AFRA-HOST-103 has serial MXQ714055Z (which NetBox wrongly holds on 101)
+    rec_a = _normalize(_asset(name="AFRA-HOST-101", org_serial_number="USE6287HAY",
+                              asset_tag="41510149"))
+    rec_b = _normalize(_asset(name="AFRA-HOST-103", org_serial_number="MXQ714055Z",
+                              asset_tag="41510148"))
+    _patch_fetch(monkeypatch, [rec_a, rec_b])
+    ae_sync.sync_assetexplorer()
+    # device id=1 must NOT get tag 41510148 (that belongs to AFRA-HOST-103)
+    assert not any(u.get("asset_tag") == "41510148" for u in ep.updated)
+    assert "stale serial" in capsys.readouterr().out
+
+
+# ── inventory item idempotency ───────────────────────────────────────────────
+
+def test_inventory_item_skipped_when_unchanged(monkeypatch):
+    """Existing inventory item with identical fields -> no update (skipped)."""
+    parent = FakeRecord(10, name="R16-ToR-SW02", serial="FOC2206X0K1", custom_fields={})
+    existing_item = FakeRecord(50, device_id=10, name="LIT20250K6Y",
+                               serial="LIT20250K6Y", role=8, manufacturer=5,
+                               description="")
+    inv_ep = FakeEndpoint([existing_item])
+    devices_ep = FakeEndpoint([parent])
+
+    monkeypatch.setattr(ae_sync, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep, inventory_items=inv_ep))
+    monkeypatch.setattr(ae_sync, "get_or_create_manufacturer", lambda n: 5)
+    monkeypatch.setattr(ae_sync, "get_or_create_inventory_role", lambda n: 8)
+
+    rec = _normalize(_asset(
+        name="LIT20250K6Y", org_serial_number="LIT20250K6Y",
+        product_type={"name": "Power Module", "internal_name": None},
+        product={"name": None, "manufacturer": "CISCO"},
+        used_by_asset={"name": "R16-ToR-SW02", "org_serial_number": "FOC2206X0K1"},
+        description="",
+    ))
+    rc = ae_sync._ensure_inventory_item(
+        _fake_api(devices=devices_ep, inventory_items=inv_ep),
+        rec, {"foc2206x0k1": parent}, {"r16-tor-sw02": [parent]})
+    assert rc == "skipped"
+    assert inv_ep.update_calls == 0 and inv_ep.create_calls == 0
+
+
+def test_inventory_item_updated_when_field_changes(monkeypatch):
+    """Existing item with a different description -> updated (changed)."""
+    parent = FakeRecord(10, name="R16-ToR-SW02", serial="FOC2206X0K1", custom_fields={})
+    existing_item = FakeRecord(50, device_id=10, name="LIT20250K6Y",
+                               serial="LIT20250K6Y", role=8, manufacturer=5,
+                               description="old desc")
+    inv_ep = FakeEndpoint([existing_item])
+    devices_ep = FakeEndpoint([parent])
+
+    monkeypatch.setattr(ae_sync, "get_netbox",
+                        lambda: _fake_api(devices=devices_ep, inventory_items=inv_ep))
+    monkeypatch.setattr(ae_sync, "get_or_create_manufacturer", lambda n: 5)
+    monkeypatch.setattr(ae_sync, "get_or_create_inventory_role", lambda n: 8)
+
+    rec = _normalize(_asset(
+        name="LIT20250K6Y", org_serial_number="LIT20250K6Y",
+        product_type={"name": "Power Module", "internal_name": None},
+        used_by_asset={"name": "R16-ToR-SW02", "org_serial_number": "FOC2206X0K1"},
+        description="new desc",
+    ))
+    rc = ae_sync._ensure_inventory_item(
+        _fake_api(devices=devices_ep, inventory_items=inv_ep),
+        rec, {"foc2206x0k1": parent}, {"r16-tor-sw02": [parent]})
+    assert rc == "updated"
+    assert inv_ep.update_calls == 1
+    assert inv_ep.created == []
+
+
 # ── hardware-suffix serial matching (Hikvision camera serials) ───────────────
 
 def test_suffix_match_camera_serial(monkeypatch):

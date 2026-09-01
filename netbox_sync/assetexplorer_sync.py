@@ -60,9 +60,17 @@ def sync_assetexplorer():
             by_name.setdefault(n, []).append(d)
     log("INFO", f"  netbox: {len(existing)} devices with serials indexed")
 
+    # AE name -> record index, for detecting stale serials (AE says serial X
+    # belongs to name N, but NetBox has serial X on a different name).
+    by_ae_name = {}
+    for rec in assets:
+        n = (rec.get("name") or "").strip().lower()
+        if n and n not in by_ae_name:
+            by_ae_name[n] = rec
+
     created = tags_synced = matched_skipped = name_matched = failures = 0
     suffix_matched = skipped_bad_serial = 0
-    inv_items_created = 0
+    inv_items_created = inv_items_updated = inv_items_skipped = 0
     failure_lines = []
 
     for rec in assets:
@@ -73,12 +81,33 @@ def sync_assetexplorer():
         cur = None
         if not _invalid_serial(serial):
             cur = existing.get(serial.lower())
+            if cur is not None and cur.name.lower() != rec_name:
+                # Names differ — could be a rename (fine) OR a stale serial
+                # (dangerous: AE says this serial belongs to a different name).
+                # Detect stale: AE has ANOTHER asset whose name matches the
+                # NetBox device but whose serial differs -> the NetBox serial
+                # is outdated, don't trust this match.
+                nb_name = cur.name.lower()
+                ae_for_nb_name = by_ae_name.get(nb_name)
+                if (ae_for_nb_name is not None
+                        and ae_for_nb_name["serial"].lower() != serial.lower()):
+                    log("WARN", f"  serial {serial} is held by {cur.name!r} "
+                                f"but AE assigns {ae_for_nb_name['serial']} to "
+                                f"that name — stale serial, using name fallback")
+                    cur = None
 
         # ── fallback 1: hardware-serial suffix (NVR long serial vs the
         #    short serial printed on the camera / stored in ME) ───────────
         if cur is None and not _invalid_serial(serial):
             sfx = _serial_suffix(serial)
+            ae_len = len("".join(c for c in serial if c.isalnum()))
             cands = by_suffix.get(sfx, []) if sfx else []
+            # Only when the AE serial is strictly shorter than the NetBox
+            # serial (the NVR-prefix case). Same-length serials would have
+            # matched exactly already; a suffix hit there is a stale serial.
+            cands = [c for c in cands
+                     if len("".join(ch for ch in (c.serial or "")
+                                    if ch.isalnum())) > ae_len]
             if len(cands) == 1:
                 cur = cands[0]
                 suffix_matched += 1
@@ -143,6 +172,8 @@ def sync_assetexplorer():
                 try:
                     api.dcim.devices.update(
                         [{"id": cur.id, "serial": serial}])
+                    # register the new serial so later AE rows match by serial
+                    existing[serial.lower()] = cur
                     log("INFO", f"  serial repaired: {cur.name} -> {serial}")
                 except Exception as e:
                     failures += 1
@@ -155,8 +186,13 @@ def sync_assetexplorer():
         # ── component (Inventory Item) path ─────────────────────────────
         if rec.get("is_component"):
             try:
-                _ensure_inventory_item(api, rec, existing, by_name)
-                inv_items_created += 1
+                rc = _ensure_inventory_item(api, rec, existing, by_name)
+                if rc == "created":
+                    inv_items_created += 1
+                elif rc == "updated":
+                    inv_items_updated += 1
+                else:
+                    inv_items_skipped += 1
             except Exception as e:
                 failures += 1
                 failure_lines.append(f"{serial}: inventory item failed: {e}")
@@ -190,7 +226,9 @@ def sync_assetexplorer():
     log("INFO", f"  asset tags updated:             {tags_synced}")
     log("INFO", f"  existing devices skipped:       {matched_skipped}")
     log("INFO", f"  new devices created:            {created}")
-    log("INFO", f"  inventory items synced:         {inv_items_created}")
+    log("INFO", f"  inventory items created:        {inv_items_created}")
+    log("INFO", f"  inventory items updated:        {inv_items_updated}")
+    log("INFO", f"  inventory items skipped:        {inv_items_skipped}")
     log("INFO", f"  failures:                       {failures}")
     for line in failure_lines:
         log("WARN", f"    failed: {line}")
@@ -251,11 +289,30 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
         payload.pop("part_id", None)
 
     if cands:
-        api.dcim.inventory_items.update([{"id": cands[0].id, **payload}])
-        log("DEBUG", f"  inventory item updated: {serial} on {parent.name}")
+        existing_item = cands[0]
+        # Idempotency: only update if something actually changed
+        changed = False
+        update_payload = {"id": existing_item.id}
+        for k, v in payload.items():
+            if k == "device":
+                continue
+            cur_val = getattr(existing_item, k, None)
+            # Normalize: None and "" are equivalent for NetBox optional fields
+            if (cur_val or "") == (v or ""):
+                continue
+            update_payload[k] = v
+            changed = True
+        if changed:
+            api.dcim.inventory_items.update([update_payload])
+            log("DEBUG", f"  inventory item updated: {serial} on {parent.name}")
+            return "updated"
+        else:
+            log("DEBUG", f"  inventory item unchanged: {serial} on {parent.name}")
+            return "skipped"
     else:
         api.dcim.inventory_items.create(payload)
         log("INFO", f"  inventory item created: {rec['name']} ({serial}) on {parent.name}")
+        return "created"
 
 
 def _payload(rec):
