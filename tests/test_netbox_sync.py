@@ -646,6 +646,38 @@ AP_ALL = """AP:
 """
 
 
+def test_parse_ap_detail():
+    import netbox_sync.collectors.ruckus as ruckus
+    detail = ruckus._parse_ap_detail("""
+      MAC Address= 70:47:77:1b:a3:80
+      Model= r550
+      Serial Number= 1234567890ABC
+      Device Name= F13-AP-W
+    """)
+    assert detail["serial"] == "1234567890ABC"
+
+
+def test_ruckus_collect_fetches_ap_serials(monkeypatch):
+    import netbox_sync.collectors.ruckus as ruckus
+    calls = []
+    class FakeSession:
+        def __init__(self, ip): pass
+        def login(self): pass
+        def run(self, cmd):
+            calls.append(cmd)
+            if cmd == "show sysinfo": return SYSINFO
+            if cmd == "show ap all": return AP_ALL
+            if cmd == "show wlan all": return WLAN_ALL
+            if cmd.startswith("show ap "):
+                return "Serial Number= SERIAL-" + cmd.split("show ap ")[1][:4]
+            return ""
+        def logout(self): pass
+    monkeypatch.setattr(ruckus, "RuckusSession", FakeSession)
+    data = ruckus.ruckus_collect("172.31.2.202")
+    assert data["aps"][0]["serial"].startswith("SERIAL-")
+    assert all(ap.get("serial") for ap in data["aps"])
+
+
 def test_parse_ap_all():
     import netbox_sync.collectors.ruckus as ruckus
     aps = ruckus._parse_ap_all(AP_ALL)
@@ -656,6 +688,27 @@ def test_parse_ap_all():
     assert aps[1]["model"] == "r350"
     assert aps[1]["group"] == "IOT-Group"
     assert aps[1]["ip"] == "172.31.2.220"
+
+
+def test_unifi_ap_serial_derived_from_mac(monkeypatch):
+    """UniFi AP without a real serial -> serial = MAC with colons removed."""
+    devices_ep = FakeEndpoint()
+    monkeypatch.setattr(nbx, "get_netbox", lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda n: 11)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda n, *a: 12)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda n: 13)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a, **k: 14)
+
+    ap = {"mac": "f4:e2:c6:13:da:0f", "model": "U7PG2", "name": "GF-AP",
+          "group": "GF", "ip": "10.0.0.1", "approved": True}
+    nbx.ensure_ap_device(ap, "unifi-x", manufacturer="Ubiquiti")
+    assert devices_ep.created[0]["serial"] == "f4e2c613da0f"
+
+    # Ruckus AP with a real serial keeps it
+    ap2 = {"mac": "70:47:77:1b:a3:80", "model": "r550", "name": "F13-AP-W",
+           "serial": "1234567890ABC"}
+    nbx.ensure_ap_device(ap2, "ruckus-x")
+    assert devices_ep.created[-1]["serial"] == "1234567890ABC"
 
 
 # ── Ruckus AP device sync ────────────────────────────────────────────────────

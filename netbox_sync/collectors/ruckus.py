@@ -129,6 +129,19 @@ def _parse_sysinfo(text):
     return out
 
 
+def _parse_ap_detail(text):
+    """Parse `show ap <mac>` detail block -> {serial, model, ...}. The
+    ZoneDirector's AP serial only shows up here, not in `show ap all`."""
+    out = {}
+    for m in re.finditer(r'^\s*(Serial number|Serial Number)\s*=\s*(.+?)\s*$',
+                         text, re.MULTILINE):
+        out.setdefault("serial", m.group(2))
+    for m in re.finditer(r'^\s*(Serial No\.?)\s*=\s*(.+?)\s*$',
+                         text, re.MULTILINE):
+        out.setdefault("serial", m.group(2))
+    return out
+
+
 def _parse_ap_all(text):
     """Parse `show ap all` ID blocks -> per-AP dicts (MAC is the identity)."""
     aps = []
@@ -261,6 +274,15 @@ def ruckus_collect(ip):
         info = _parse_sysinfo(sess.run("show sysinfo"))
         aps = _parse_ap_all(sess.run("show ap all"))
         wlans = _parse_wlan_all(sess.run("show wlan all"))
+        # Each AP's serial only appears in its own detail block — fetch one
+        # `show ap <mac>` per AP. Slow controllers: failures stay soft (serial
+        # just ends up None, MAC identity unchanged).
+        for ap in aps:
+            try:
+                detail = _parse_ap_detail(sess.run(f"show ap {ap['mac']}"))
+                ap["serial"] = detail.get("serial") or None
+            except Exception as exc:
+                log("WARN", f"  ruckus: AP {ap['mac']} detail failed: {exc}")
         log("INFO", f"  ruckus: {len(aps)} APs, {len(wlans)} WLANs")
         return {
             "summary": {
