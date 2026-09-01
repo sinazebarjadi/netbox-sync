@@ -223,6 +223,26 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
         except Exception as e:
             log("WARN", f"  NVR primary IPv4 sync failed for {ip}: {e}")
 
+        # Hard drives -> Inventory Items attached to the NVR device
+        for hdd in data.get("hdds", []):
+            try:
+                inv_payload = {
+                    "device":       dev_id,
+                    "name":         hdd["name"][:64],
+                    "role":         get_or_create_inventory_role("HDD"),
+                    "manufacturer": get_or_create_manufacturer("Hikvision"),
+                    "serial":       hdd.get("serial") or f"{probe.get('serial', 'NVR')}-SLOT-{hdd['slot']}",
+                    "description":  f"Type: {hdd.get('type')}, Capacity: {hdd.get('capacity')}, Status: {hdd.get('status')}",
+                }
+                existing_items = list(api.dcim.inventory_items.filter(
+                    device_id=dev_id, serial=inv_payload["serial"]))
+                if existing_items:
+                    api.dcim.inventory_items.update([{"id": existing_items[0].id, **inv_payload}])
+                else:
+                    api.dcim.inventory_items.create(inv_payload)
+            except Exception as e:
+                log("WARN", f"  HDD sync failed for slot {hdd.get('slot')}: {e}")
+
         # Cameras -> separate devices, linked to the NVR via cam_nvr.
         seen_camera_serials = set()
         seen_camera_channels = set()

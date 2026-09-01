@@ -61,6 +61,52 @@ def _child_text(elem, tag):
     return None
 
 
+def _parse_hdd_list(xml_text):
+    """Parse `/ISAPI/ContentMgmt/Storage/hdd` XML to list of disk dicts.
+    Filters out 'Virtual Disk' array abstractions and yields physical disks."""
+    if not xml_text:
+        return []
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:
+        return []
+    hdds = []
+    for hdd in root.findall(f"{{{_ISAPI_NS}}}hdd") or root.findall("hdd"):
+        hdd_type = _child_text(hdd, "hddType") or ""
+        if hdd_type.lower() == "virtual disk":
+            continue
+        slot_id = _child_text(hdd, "id")
+        cap_mb = _child_text(hdd, "capacity")
+        status = _child_text(hdd, "status")
+        prop = _child_text(hdd, "property")
+        name = _child_text(hdd, "hddName") or f"HDD-{slot_id}"
+
+        # Capacity string (MB -> TB/GB)
+        cap_str = ""
+        try:
+            val_mb = int(cap_mb)
+            if val_mb >= 1024 * 1024:
+                tb = val_mb / (1024 * 1024)
+                cap_str = f"{round(tb, 1)}TB" if tb != int(tb) else f"{int(tb)}TB"
+            elif val_mb > 0:
+                cap_str = f"{val_mb // 1024}GB"
+        except (ValueError, TypeError):
+            pass
+
+        hdds.append({
+            "slot": slot_id,
+            "name": f"Disk {slot_id}" + (f" ({cap_str})" if cap_str else ""),
+            "type": hdd_type or "SATA",
+            "capacity": cap_str,
+            "status": status or "ok",
+            "property": prop or "RW",
+            "model": _child_text(hdd, "model"),
+            "serial": _child_text(hdd, "serialNumber"),
+        })
+
+    return hdds
+
+
 def _parse_device_info(xml_text):
     """`GET /ISAPI/System/deviceInfo` -> NVR identity dict. Also used for the
     per-channel proxied camera deviceInfo (which carries the camera MAC)."""
@@ -164,6 +210,13 @@ def hikvision_collect(ip):
         info = _parse_device_info(sess.get("/ISAPI/System/deviceInfo"))
         cameras = _parse_channels(
             sess.get("/ISAPI/ContentMgmt/InputProxy/channels"))
+        
+        # Hard drives collection directly from the NVR
+        try:
+            hdds = _parse_hdd_list(sess.get("/ISAPI/ContentMgmt/Storage/hdd"))
+        except Exception as exc:
+            log("DEBUG", f"  hikvision HDD collection skipped for {ip}: {exc}")
+            hdds = []
         try:
             status = _parse_channel_status(
                 sess.get("/ISAPI/ContentMgmt/InputProxy/channels/status"))
@@ -207,6 +260,7 @@ def hikvision_collect(ip):
                 "firmware": info.get("firmware"),
             },
             "cameras": cameras,
+            "hdds": hdds,
         }
     finally:
         sess.logout()
