@@ -179,6 +179,45 @@ class StorageSession:
             objects.append(props)
         return objects
 
+def _extract_chassis_serial(storage, system_row=None):
+    """Extract the real physical Chassis/Midplane serial number across all MSA models.
+
+    On older MSA 2040/2042 and 2050/2052 firmwares:
+      - `show system` midplane-serial-number returns an internal hex/MAC-like ID (e.g. 00C0FF26F91D).
+      - `show frus` (CHASSIS_MIDPLANE) and `show enclosures` (row[0] midplane-serial-number)
+        return the real physical printed chassis serial (e.g. 2S6550B888, 2S6701B110, ACM108T35N).
+
+    On newer MSA 2060/2062 firmwares:
+      - `show system` / `show frus` / `show enclosures` all return the physical serial (e.g. ACV247W3L8).
+    """
+    # 1. First priority: `show frus` -> CHASSIS_MIDPLANE serial-number
+    try:
+        for row in storage.show("frus"):
+            name = (row.get("name") or "").upper()
+            shortname = (row.get("fru-shortname") or "").lower()
+            if "CHASSIS" in name or "MIDPLANE" in name or "midplane" in shortname or "chassis" in shortname:
+                sn = row.get("serial-number") or row.get("configuration-serialnumber")
+                if sn and not sn.startswith("00C0FF"):
+                    return sn.strip()
+    except Exception:
+        pass
+
+    # 2. Second priority: `show enclosures` -> first enclosure midplane-serial-number
+    try:
+        enc_rows = storage.show("enclosures")
+        if enc_rows:
+            sn = enc_rows[0].get("midplane-serial-number") or enc_rows[0].get("serial-number")
+            if sn and not sn.startswith("00C0FF"):
+                return sn.strip()
+    except Exception:
+        pass
+
+    # 3. Fallback: `show system` midplane-serial-number or serial-number
+    if system_row:
+        return system_row.get("midplane-serial-number") or system_row.get("serial-number")
+    return None
+
+
 def probe_storage(ip, retries=2, retry_delay=3):
     for attempt in range(1, retries + 1):
         if not is_port_open(ip, STORAGE_PORT):
@@ -199,9 +238,7 @@ def probe_storage(ip, retries=2, retry_delay=3):
             if not system_rows: raise RuntimeError("empty system response")
 
             system = system_rows[0]
-            # On MSA 2040/2042 and 2050/2052, midplane-serial-number is the physical chassis
-            # serial printed on the unit and registered in AssetExplorer / NetBox.
-            serial = system.get("midplane-serial-number") or system.get("serial-number")
+            serial = _extract_chassis_serial(storage, system)
             product = system.get("product-id") or system.get("vendor-name") or "Storage"
             system_name = system.get("system-name") or system.get("system-contact") or f"storage-{ip.replace('.', '-')}"
             firmware = None
@@ -470,9 +507,7 @@ def storage_collect_inventory(ip):
 
         try:
             system = storage.show("system")[0]
-            # On MSA 2040/2042 and 2050/2052, midplane-serial-number is the physical chassis
-            # serial printed on the unit and registered in AssetExplorer / NetBox.
-            summary["serial"] = system.get("midplane-serial-number") or system.get("serial-number")
+            summary["serial"] = _extract_chassis_serial(storage, system)
             summary["model"] = normalize_model(system.get("product-id"), STORAGE_MODEL_MAP) or system.get("product-id")
             summary["health"] = system.get("health")
         except Exception: pass
