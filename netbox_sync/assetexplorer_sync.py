@@ -141,20 +141,38 @@ def sync_assetexplorer():
                                 f"({len(cands)} devices) — skipped")
 
         if cur is not None:
-            # ── matched device -> enrich ONLY: sync Asset Tag ─────────────
-            # The discovery automation is the source of truth for all hardware/
-            # network data. We NEVER overwrite name, serial, model, role, site,
-            # status, interfaces, or any automation-collected field.
-            # (Department is only set on newly CREATED offline devices, not
-            # injected into discovery-managed devices).
+            # ── matched device -> enrich ONLY missing information ────────
+            # The discovery automation is the absolute source of truth for
+            # all devices it manages. ManageEngine NEVER overwrites any
+            # existing value in NetBox. It only fills fields that are EMPTY:
+            # 1. asset_tag: if NetBox has no asset tag and ME provides one
+            # 2. ae_department: if NetBox has no department and ME has one
+            update_payload = {"id": cur.id}
+            changed = False
+
             ae_tag = (rec.get("asset_tag") or "").strip()
             nb_tag = (cur.asset_tag or "").strip()
-            if ae_tag and nb_tag.lower() != ae_tag.lower():
+            # ONLY fill if NetBox tag is currently empty (never overwrite an existing tag)
+            if not nb_tag and ae_tag:
+                update_payload["asset_tag"] = ae_tag
+                changed = True
+
+            # Department enrichment (only if empty in NetBox)
+            ae_dept = (rec.get("department") or "").strip()
+            nb_dept = str((cur.custom_fields or {}).get("ae_department") or "").strip()
+            if not nb_dept and ae_dept:
+                cf = dict(cur.custom_fields or {})
+                cf["ae_department"] = ae_dept
+                update_payload["custom_fields"] = cf
+                changed = True
+
+            if changed:
                 try:
-                    api.dcim.devices.update([{"id": cur.id, "asset_tag": ae_tag}])
-                    tags_synced += 1
-                    log("INFO", f"  asset-tag synced: {rec.get('serial')} "
-                                f"{cur.name} -> {ae_tag}")
+                    api.dcim.devices.update([update_payload])
+                    if "asset_tag" in update_payload:
+                        tags_synced += 1
+                        log("INFO", f"  asset-tag populated: {rec.get('serial')} "
+                                    f"{cur.name} -> {ae_tag}")
                 except Exception as e:
                     if "asset tag already exists" in str(e):
                         matched_skipped += 1
@@ -163,9 +181,8 @@ def sync_assetexplorer():
                     else:
                         failures += 1
                         failure_lines.append(
-                            f"{rec.get('serial')}: asset-tag update failed: {e}")
-                        log("ERROR", f"  asset-tag update failed for "
-                                     f"{rec.get('serial')}: {e}")
+                            f"{rec.get('serial')}: update failed: {e}")
+                        log("ERROR", f"  update failed for {rec.get('serial')}: {e}")
             else:
                 matched_skipped += 1
             continue

@@ -165,10 +165,10 @@ def test_creates_new_device_for_unknown_serial(monkeypatch):
     assert p["custom_fields"]["ae_location"] == "SHN R16 U15-16"
 
 
-def test_asset_tag_synced_on_serial_match(monkeypatch):
-    """Serial found + different asset tag -> update ONLY the tag."""
+def test_asset_tag_synced_when_empty_in_netbox(monkeypatch):
+    """Serial found + empty asset tag in NetBox -> populate tag from ME."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="OLD-123",
+                          asset_tag="",
                           custom_fields={"bmc_ip": "10.0.0.1"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
@@ -177,13 +177,28 @@ def test_asset_tag_synced_on_serial_match(monkeypatch):
     assert ep.create_calls == 0
     assert ep.update_calls == 1
     upd = ep.updated[0]
-    assert upd == {"id": 9, "asset_tag": "41510140"}
+    assert upd["id"] == 9
+    assert upd["asset_tag"] == "41510140"
+
+
+def test_existing_asset_tag_in_netbox_is_never_overwritten(monkeypatch):
+    """Serial found + already has a tag in NetBox -> ME MUST NOT overwrite it."""
+    existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
+                          asset_tag="EXISTING-TAG",
+                          custom_fields={"bmc_ip": "10.0.0.1",
+                                         "ae_department": "ICT"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_asset(asset_tag="NEW-ME-TAG"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0 and ep.update_calls == 0
 
 
 def test_no_change_when_asset_tag_already_correct(monkeypatch):
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
                           asset_tag="41510140",
-                          custom_fields={"bmc_ip": "10.0.0.1"})
+                          custom_fields={"bmc_ip": "10.0.0.1",
+                                         "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     _patch_fetch(monkeypatch, [_normalize(_asset())])
@@ -194,7 +209,8 @@ def test_no_change_when_asset_tag_already_correct(monkeypatch):
 def test_no_change_when_ae_tag_empty(monkeypatch):
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
                           asset_tag="KEEP-ME",
-                          custom_fields={"bmc_ip": "10.0.0.1"})
+                          custom_fields={"bmc_ip": "10.0.0.1",
+                                         "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     rec = _normalize(_asset(asset_tag=None))
@@ -206,7 +222,7 @@ def test_no_change_when_ae_tag_empty(monkeypatch):
 def test_asset_tag_match_case_insensitive(monkeypatch):
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv",
                           asset_tag="41510140",
-                          custom_fields={})
+                          custom_fields={"ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     rec = _normalize(_asset(asset_tag="41510140"))
@@ -216,10 +232,11 @@ def test_asset_tag_match_case_insensitive(monkeypatch):
 
 
 def test_skips_discovery_managed_device(monkeypatch):
-    """Serial found, no asset tag diff -> untouched (no other fields written)."""
+    """Serial found, tag and department already set -> untouched."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
                           asset_tag="41510140",
-                          custom_fields={"bmc_ip": "10.0.0.1"})
+                          custom_fields={"bmc_ip": "10.0.0.1",
+                                         "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     _patch_fetch(monkeypatch, [_normalize(_asset())])
@@ -228,11 +245,11 @@ def test_skips_discovery_managed_device(monkeypatch):
 
 
 def test_skip_only_even_for_ae_owned_device(monkeypatch):
-    """Serial found -> only the asset tag may change; other AE fields never."""
+    """Serial found -> only missing fields may be filled; others never overwritten."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="old-name",
                           asset_tag="41510140",
                           custom_fields={"ae_asset_id": "32",
-                                         "ae_department": "Old"})
+                                         "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     _patch_fetch(monkeypatch, [_normalize(_asset())])
@@ -268,7 +285,8 @@ def test_case_insensitive_serial_still_skips_discovery_managed(monkeypatch):
     """Case-differing serial matches an existing device -> never a duplicate."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
                           asset_tag="41510140",
-                          custom_fields={"bmc_ip": "10.0.0.1"})
+                          custom_fields={"bmc_ip": "10.0.0.1",
+                                         "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     rec = _normalize(_asset(org_serial_number="6cu8474ftv"))
@@ -315,7 +333,10 @@ def test_name_collision_adopts_blank_serial_device(monkeypatch):
         name="AFRA-HOST-06", org_serial_number="MXQ62800GS"))])
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0                       # never creates
-    assert ep.updated and ep.updated[0] == {"id": 21, "asset_tag": "41510140"}
+    assert ep.updated and ep.updated[0]["id"] == 21
+    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert "name" not in ep.updated[0]
+    assert "serial" not in ep.updated[0]
 
 
 def test_name_collision_with_different_serial_is_skipped(monkeypatch):
@@ -333,7 +354,7 @@ def test_name_collision_with_different_serial_is_skipped(monkeypatch):
 
 def test_tag_conflict_on_update_is_warn_not_failure(monkeypatch, capsys):
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv", asset_tag="",
-                          custom_fields={})
+                          custom_fields={"ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     ep.update = lambda rows: (_ for _ in ()).throw(RuntimeError(
@@ -434,7 +455,8 @@ def test_serial_held_by_different_name_uses_name_fallback(monkeypatch, capsys):
     fall through to name matching and find the real AFRA-HOST-103."""
     wrong = FakeRecord(1, name="Afra-Host-101", serial="MXQ714055Z",
                        asset_tag="41510149",
-                       site=SimpleNamespace(name="Afranet"), custom_fields={})
+                       site=SimpleNamespace(name="Afranet"),
+                       custom_fields={"ae_department": "ICT"})
     right = FakeRecord(2, name="Afra-Host-103", serial="", asset_tag=None,
                        site=SimpleNamespace(name="Afranet"), custom_fields={})
     ep = FakeEndpoint([wrong, right])
@@ -485,7 +507,7 @@ def test_inventory_item_skipped_when_unchanged(monkeypatch):
     parent = FakeRecord(10, name="R16-ToR-SW02", serial="FOC2206X0K1", custom_fields={})
     existing_item = FakeRecord(50, device_id=10, name="LIT20250K6Y",
                                serial="LIT20250K6Y", role=8, manufacturer=5,
-                               description="")
+                               part_id="power switch", description="")
     inv_ep = FakeEndpoint([existing_item])
     devices_ep = FakeEndpoint([parent])
 
@@ -497,7 +519,7 @@ def test_inventory_item_skipped_when_unchanged(monkeypatch):
     rec = _normalize(_asset(
         name="LIT20250K6Y", org_serial_number="LIT20250K6Y",
         product_type={"name": "Power Module", "internal_name": None},
-        product={"name": None, "manufacturer": "CISCO"},
+        product={"name": "power switch", "manufacturer": "CISCO"},
         used_by_asset={"name": "R16-ToR-SW02", "org_serial_number": "FOC2206X0K1"},
         description="",
     ))
@@ -550,7 +572,8 @@ def test_suffix_match_camera_serial(monkeypatch):
     _patch_fetch(monkeypatch, [rec])
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0
-    assert ep.updated[0] == {"id": 7, "asset_tag": "41510140"}
+    assert ep.updated[0]["id"] == 7
+    assert ep.updated[0]["asset_tag"] == "41510140"
 
 
 def test_suffix_match_ambiguous_skips(monkeypatch, capsys):
