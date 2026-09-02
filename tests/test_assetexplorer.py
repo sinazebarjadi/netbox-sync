@@ -82,7 +82,7 @@ def test_ensure_inventory_item_attaches_to_parent(monkeypatch):
 
 
 def test_ensure_inventory_item_creates_warehouse_device_when_unattached(monkeypatch):
-    """Unattached component -> attached to a Warehouse-Stock container device."""
+    """Unattached component -> attached ONLY to the HQ Warehouse-Stock container."""
     inv_ep = FakeEndpoint([])
     devices_ep = FakeEndpoint([])
 
@@ -96,15 +96,18 @@ def test_ensure_inventory_item_creates_warehouse_device_when_unattached(monkeypa
     rec = _normalize(_asset(
         name="S6M7NE0TA04794", org_serial_number="S6M7NE0TA04794",
         product_type={"name": "HARD-Hardware", "internal_name": None},
-        site={"name": "HQ"}
+        site={"name": "Afranet"},   # Even if site is Afranet, unattached stock goes to HQ
+        udf_fields={"udf_sline_601": "960GB"}
     ))
     ae_sync._ensure_inventory_item(_fake_api(devices=devices_ep, inventory_items=inv_ep),
                                   rec, {}, {})
-    # 1 warehouse device created + 1 inventory item created
+    # 1 warehouse device created (HQ only) + 1 inventory item created with capacity
     assert len(devices_ep.created) == 1
     assert devices_ep.created[0]["name"] == "Warehouse-Stock-HQ"
     assert len(inv_ep.created) == 1
     assert inv_ep.created[0]["serial"] == "S6M7NE0TA04794"
+    assert "960GB" in inv_ep.created[0]["name"]
+    assert "Capacity: 960GB" in inv_ep.created[0]["description"]
     rec = _normalize(_asset(product_type={"name": "CCTV", "internal_name": None}))
     assert rec["role"] == "Camera"
 
@@ -507,7 +510,8 @@ def test_inventory_item_skipped_when_unchanged(monkeypatch):
     parent = FakeRecord(10, name="R16-ToR-SW02", serial="FOC2206X0K1", custom_fields={})
     existing_item = FakeRecord(50, device_id=10, name="LIT20250K6Y",
                                serial="LIT20250K6Y", role=8, manufacturer=5,
-                               part_id="power switch", description="")
+                               part_id="power switch",
+                               description="Department: ICT | Asset Tag: 41510140")
     inv_ep = FakeEndpoint([existing_item])
     devices_ep = FakeEndpoint([parent])
 

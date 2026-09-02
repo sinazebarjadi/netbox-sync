@@ -106,6 +106,8 @@ def _normalize(a, stats=None):
     udf = a.get("udf_fields") or {}
     # Product name (e.g. "WD64PURZ-85BWUY0" or "power switch") for inventory items
     product_name = ((a.get("product") or {}).get("name") or "").strip() or None
+    # Capacity is in udf_sline_601 (e.g. "960GB", "8TB")
+    capacity = (udf.get("udf_sline_601") or "").strip() or None
 
     return {
         "ae_id":          a.get("id"),
@@ -119,6 +121,7 @@ def _normalize(a, stats=None):
                             or "").strip() or None),
         "model":          ((a.get("product") or {}).get("name") or "").strip() or None,
         "part_number":    udf.get("udf_sline_602") or product_name,
+        "capacity":       capacity,
         "asset_tag":      (a.get("asset_tag") or "").strip() or None,
         "site":           ((a.get("site") or {}).get("name") or "").strip() or None,
         "status":         AE_STATE_TO_STATUS.get(state, "inventory"),

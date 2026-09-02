@@ -242,7 +242,7 @@ def sync_assetexplorer():
 def _ensure_inventory_item(api, rec, existing_devices, by_name):
     """Sync a component (Power Module, HARD-Hardware, HARD-CCTV, NM Module)
     as a NetBox Inventory Item attached to its parent device (via used_by_asset)
-    or to an inventory/warehouse device if unattached."""
+    or to the single HQ Warehouse-Stock container if unattached."""
     serial = rec["serial"]
     parent = None
 
@@ -257,11 +257,10 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
         if len(cands) == 1:
             parent = cands[0]
 
-    # If unattached or parent not found, attach to a generic warehouse/offline device
+    # Rule 1: Warehouse Stock exists ONLY for the HQ site. All unattached items go to HQ.
     if parent is None:
-        site_name = rec.get("site") or "Warehouse"
-        site_id = get_or_create_site(site_name)
-        warehouse_name = f"Warehouse-Stock-{site_name}"
+        site_id = get_or_create_site("HQ")
+        warehouse_name = "Warehouse-Stock-HQ"
         mfr_id = get_or_create_manufacturer("Generic")
         dtype_id = get_or_create_device_type("Warehouse Inventory", mfr_id)
         role_id = get_or_create_role("Inventory")
@@ -276,18 +275,36 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
                 "comments": "Container for offline/spare inventory items from AssetExplorer"
             })
 
+    # Rule 2: Check if an inventory item with this serial already exists on this device
     cands = list(api.dcim.inventory_items.filter(device_id=parent.id, serial=serial))
     role_id = get_or_create_inventory_role(rec.get("component_role") or "Other")
     mfr_id = get_or_create_manufacturer(rec.get("manufacturer") or "Unknown")
 
+    # Build descriptive name including capacity if present (e.g. "Disk 960GB" or item name)
+    cap = rec.get("capacity")
+    name = rec["name"]
+    if cap and cap not in name:
+        name = f"{name} ({cap})"
+
+    desc_parts = []
+    if rec.get("description"):
+        desc_parts.append(rec["description"])
+    if cap:
+        desc_parts.append(f"Capacity: {cap}")
+    if rec.get("department"):
+        desc_parts.append(f"Department: {rec['department']}")
+    if rec.get("asset_tag"):
+        desc_parts.append(f"Asset Tag: {rec['asset_tag']}")
+    description = " | ".join(desc_parts)
+
     payload = {
         "device":       parent.id,
-        "name":         rec["name"][:64],
+        "name":         name[:64],
         "serial":       serial,
         "part_id":      (rec.get("part_number") or "")[:50] or None,
         "role":         role_id,
         "manufacturer": mfr_id,
-        "description":  rec.get("description") or "",
+        "description":  description[:200],
     }
     if not payload["part_id"]:
         payload.pop("part_id", None)
@@ -301,7 +318,7 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
             if k == "device":
                 continue
             cur_val = getattr(existing_item, k, None)
-            # Normalize: None and "" are equivalent for NetBox optional fields
+            # Normalize None and ""
             if (cur_val or "") == (v or ""):
                 continue
             update_payload[k] = v
@@ -315,7 +332,7 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
             return "skipped"
     else:
         api.dcim.inventory_items.create(payload)
-        log("INFO", f"  inventory item created: {rec['name']} ({serial}) on {parent.name}")
+        log("INFO", f"  inventory item created: {name} ({serial}) on {parent.name}")
         return "created"
 
 
