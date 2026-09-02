@@ -141,19 +141,22 @@ def sync_assetexplorer():
                                 f"({len(cands)} devices) — skipped")
 
         if cur is not None:
-            # ── matched (serial or name) -> sync Asset Tag only ──────────
+            # ── matched device -> enrich ONLY: sync Asset Tag ─────────────
+            # The discovery automation is the source of truth for all hardware/
+            # network data. We NEVER overwrite name, serial, model, role, site,
+            # status, interfaces, or any automation-collected field.
+            # (Department is only set on newly CREATED offline devices, not
+            # injected into discovery-managed devices).
             ae_tag = (rec.get("asset_tag") or "").strip()
             nb_tag = (cur.asset_tag or "").strip()
             if ae_tag and nb_tag.lower() != ae_tag.lower():
                 try:
-                    api.dcim.devices.update(
-                        [{"id": cur.id, "asset_tag": ae_tag}])
+                    api.dcim.devices.update([{"id": cur.id, "asset_tag": ae_tag}])
                     tags_synced += 1
                     log("INFO", f"  asset-tag synced: {rec.get('serial')} "
                                 f"{cur.name} -> {ae_tag}")
                 except Exception as e:
                     if "asset tag already exists" in str(e):
-                        # another (stale) device holds this tag — skip, don't fail
                         matched_skipped += 1
                         log("WARN", f"  asset-tag {ae_tag} held by another "
                                     f"device — skipped for {rec.get('serial')}")
@@ -165,22 +168,6 @@ def sync_assetexplorer():
                                      f"{rec.get('serial')}: {e}")
             else:
                 matched_skipped += 1
-
-            # ── serial repair: fill NetBox serial ONLY when it is empty ──
-            nb_serial = (cur.serial or "").strip()
-            if _invalid_serial(nb_serial) and not _invalid_serial(serial):
-                try:
-                    api.dcim.devices.update(
-                        [{"id": cur.id, "serial": serial}])
-                    # register the new serial so later AE rows match by serial
-                    existing[serial.lower()] = cur
-                    log("INFO", f"  serial repaired: {cur.name} -> {serial}")
-                except Exception as e:
-                    failures += 1
-                    failure_lines.append(
-                        f"{serial}: serial repair failed: {e}")
-                    log("ERROR", f"  serial repair failed for "
-                                 f"{serial} ({cur.name}): {e}")
             continue
 
         # ── component (Inventory Item) path ─────────────────────────────

@@ -357,9 +357,12 @@ def test_name_fallback_syncs_tag_when_serial_missing_in_netbox(monkeypatch):
     _patch_fetch(monkeypatch, [rec])
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0
-    assert ep.update_calls == 2   # asset tag + serial repair
-    assert {"id": 21, "asset_tag": "41510140"} in ep.updated
-    assert {"id": 21, "serial": "MXQ62800GS"} in ep.updated
+    assert ep.update_calls == 1
+    # Only asset_tag and ae_department enriched; name/serial untouched
+    assert ep.updated[0]["id"] == 21
+    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert "name" not in ep.updated[0]
+    assert "serial" not in ep.updated[0]
 
 
 def test_name_fallback_ambiguous_name_skips(monkeypatch, capsys):
@@ -392,8 +395,10 @@ def test_name_fallback_with_site_disambiguation(monkeypatch):
     rec = _normalize(_asset(name="HOST-01", org_serial_number="NEW123"))
     _patch_fetch(monkeypatch, [rec])
     ae_sync.sync_assetexplorer()
-    assert ep.update_calls == 2   # asset tag + serial repair on the site-matched device
-    assert all(u["id"] == 2 for u in ep.updated)
+    assert ep.update_calls == 1
+    assert ep.updated[0]["id"] == 2
+    assert "name" not in ep.updated[0]
+    assert "serial" not in ep.updated[0]
 
 
 def test_serial_less_ae_asset_matched_by_name_not_created(monkeypatch):
@@ -443,10 +448,11 @@ def test_serial_held_by_different_name_uses_name_fallback(monkeypatch, capsys):
     ae_sync.sync_assetexplorer()
     # wrong device untouched
     assert not any(u.get("id") == 1 for u in ep.updated)
-    # right device got the tag + serial repair
+    # right device got the tag; name/serial NOT overwritten
     upd = [u for u in ep.updated if u.get("id") == 2]
-    assert upd and any(u.get("asset_tag") == "41510148" for u in upd)
-    assert any(u.get("serial") == "MXQ714055Z" for u in upd)
+    assert upd and upd[0]["asset_tag"] == "41510148"
+    assert "name" not in upd[0]
+    assert "serial" not in upd[0]
     assert "held by" in capsys.readouterr().out
 
 
