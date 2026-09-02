@@ -199,7 +199,9 @@ def probe_storage(ip, retries=2, retry_delay=3):
             if not system_rows: raise RuntimeError("empty system response")
 
             system = system_rows[0]
-            serial = system.get("serial-number") or system.get("midplane-serial-number")
+            # On MSA 2040/2042 and 2050/2052, midplane-serial-number is the physical chassis
+            # serial printed on the unit and registered in AssetExplorer / NetBox.
+            serial = system.get("midplane-serial-number") or system.get("serial-number")
             product = system.get("product-id") or system.get("vendor-name") or "Storage"
             system_name = system.get("system-name") or system.get("system-contact") or f"storage-{ip.replace('.', '-')}"
             firmware = None
@@ -468,7 +470,9 @@ def storage_collect_inventory(ip):
 
         try:
             system = storage.show("system")[0]
-            summary["serial"] = system.get("serial-number")
+            # On MSA 2040/2042 and 2050/2052, midplane-serial-number is the physical chassis
+            # serial printed on the unit and registered in AssetExplorer / NetBox.
+            summary["serial"] = system.get("midplane-serial-number") or system.get("serial-number")
             summary["model"] = normalize_model(system.get("product-id"), STORAGE_MODEL_MAP) or system.get("product-id")
             summary["health"] = system.get("health")
         except Exception: pass
