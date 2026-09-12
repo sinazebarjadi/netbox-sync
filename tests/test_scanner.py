@@ -11,19 +11,20 @@ def _fail_probe(ip):
 @pytest.fixture
 def no_families(monkeypatch):
     for attr in ("BMC_RANGES", "STORAGE_RANGES", "SAN_RANGES", "CISCO_RANGES",
-                 "FORTIGATE_RANGES", "RUCKUS_RANGES", "UNIFI_RANGES"):
+                 "FORTIGATE_RANGES", "RUCKUS_RANGES", "UNIFI_RANGES",
+                 "FORTIWEB_RANGES", "FMC_RANGES"):
         monkeypatch.setattr(scanner, attr, [])
     for fn in ("probe_redfish", "probe_storage", "probe_san_switch",
                "probe_cisco_switch", "probe_fortigate", "probe_ruckus",
-               "probe_unifi"):
+               "probe_unifi", "probe_fortiweb", "probe_ftd"):
         monkeypatch.setattr(scanner, fn, _fail_probe)
 
 
 def test_scan_all_skips_disabled_families(no_families):
     found = scanner.scan_all()
     assert found == {"servers": [], "storage": [], "san_switches": [],
-                     "cisco_switches": [], "fortigates": [], "ruckus": [],
-                     "hikvision_nvrs": [], "unifi": [],
+                     "cisco_switches": [], "fortigates": [], "fortiwebs": [],
+                     "ftds": [], "ruckus": [], "hikvision_nvrs": [], "unifi": [],
                      "dahua_nvrs": [], "unv_nvrs": []}
 
 

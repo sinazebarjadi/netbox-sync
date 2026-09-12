@@ -2,6 +2,76 @@
 import netbox_sync.collectors.cisco as mod
 
 
+SHOW_SWITCH_STACK = """Switch/Stack Mac Address : 247e.1269.0200 - Local Mac Address
+Mac persistency wait time: Indefinite
+                                             H/W   Current
+Switch#   Role    Mac Address     Priority Version  State
+-------------------------------------------------------------------------------------
+*1       Active   247e.1269.0200     5      V07     Ready
+ 2       Standby  247e.12e4.a300     1      V07     Ready
+"""
+
+SHOW_SWITCH_SINGLE = """Switch/Stack Mac Address : d009.c86a.fc80 - Local Mac Address
+Mac persistency wait time: Indefinite
+                                             H/W   Current
+Switch#   Role    Mac Address     Priority Version  State
+-------------------------------------------------------------------------------------
+*1       Active   d009.c86a.fc80     1      V03     Ready
+"""
+
+SHOW_INVENTORY_STACK = """NAME: "c38xx Stack", DESCR: "c38xx Stack"
+PID: WS-C3850-24T-S    , VID: V07  , SN: FOC2148U0U9
+
+NAME: "Switch 1", DESCR: "WS-C3850-24T-S"
+PID: WS-C3850-24T-S    , VID: V07  , SN: FOC2148U0U9
+
+NAME: "Switch 1 - Power Supply A", DESCR: "Switch 1 - Power Supply A"
+PID: PWR-C1-350WAC     , VID: V01  , SN: ART2144FABT
+
+NAME: "Switch 2", DESCR: "WS-C3850-24T-S"
+PID: WS-C3850-24T-S    , VID: V07  , SN: FCW2148F0RA
+
+NAME: "Switch 2 - Power Supply A", DESCR: "Switch 2 - Power Supply A"
+PID: PWR-C1-350WAC     , VID: V01  , SN: ART2144FAAN
+"""
+
+
+def test_parse_show_switch_stack():
+    out = mod._parse_show_switch(SHOW_SWITCH_STACK)
+    assert out == [
+        {"member": 1, "role": "Active", "mac": "247e.1269.0200", "state": "Ready"},
+        {"member": 2, "role": "Standby", "mac": "247e.12e4.a300", "state": "Ready"},
+    ]
+
+
+def test_parse_show_switch_single():
+    out = mod._parse_show_switch(SHOW_SWITCH_SINGLE)
+    assert len(out) == 1
+    assert out[0]["role"] == "Active"
+
+
+def test_stack_members_joins_serials():
+    switch_rows = mod._parse_show_switch(SHOW_SWITCH_STACK)
+    inv_rows = mod._parse_show_inventory(SHOW_INVENTORY_STACK)
+    stack = mod._stack_members(switch_rows, inv_rows)
+    assert stack == [
+        {"member": 1, "role": "Active", "mac": "247e.1269.0200",
+         "state": "Ready", "serial": "FOC2148U0U9"},
+        {"member": 2, "role": "Standby", "mac": "247e.12e4.a300",
+         "state": "Ready", "serial": "FCW2148F0RA"},
+    ]
+
+
+def test_stack_members_skips_members_without_serial():
+    # a member with no 'Switch N' inventory row (e.g. not ready) is dropped
+    switch_rows = mod._parse_show_switch(SHOW_SWITCH_STACK)
+    inv_rows = [r for r in mod._parse_show_inventory(SHOW_INVENTORY_STACK)
+                if r.get("name") != "Switch 2"]
+    stack = mod._stack_members(switch_rows, inv_rows)
+    assert len(stack) == 1
+    assert stack[0]["serial"] == "FOC2148U0U9"
+
+
 SHOW_VERSION_IOSXE = """Cisco IOS Software [Fuji], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 16.9.4, RELEASE SOFTWARE (fc2)
 Technical Support: http://www.cisco.com/techsupport
 Copyright (c) 1986-2019 by Cisco Systems, Inc.

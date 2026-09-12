@@ -87,7 +87,8 @@ def print_summary(found):
     labels = {
         "servers": "Servers", "storage": "Storage",
         "san_switches": "SAN switches", "cisco_switches": "Cisco switches",
-        "fortigates": "FortiGates", "ruckus": "Ruckus",
+        "fortigates": "FortiGates", "fortiwebs": "FortiWeb WAFs",
+        "ftds": "Cisco FTDs", "ruckus": "Ruckus",
         "unifi": "UniFi consoles", "hikvision_nvrs": "Hikvision NVRs",
         "dahua_nvrs": "Dahua NVRs", "unv_nvrs": "Uniview NVRs",
     }

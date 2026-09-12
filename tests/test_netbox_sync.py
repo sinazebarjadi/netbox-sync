@@ -996,7 +996,97 @@ _HA = {"clustered": True, "group_name": "Z-Cluster-FW", "mode": "a-p",
             "is_primary": False}]}
 
 
-def test_ensure_fortigate_device_cluster_creates_with_ha_fields(monkeypatch):
+def test_ensure_fortigate_device_cluster_creates_two_devices_shared_ip(monkeypatch):
+    """HA pair -> TWO devices (one per unit), distinct serials, shared mgmt IP.
+    Replaces the old merge-into-one-cluster behavior."""
+    devices_ep = FakeEndpoint()
+    monkeypatch.setattr(nbx, "get_netbox", lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda n: 11)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda n, *a: 12)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda n: 13)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a, **k: 14)
+    monkeypatch.setattr(nbx, "find_device", lambda *a, **k: None)
+    # stub the IP assignment (hits ipam); we only assert it's invoked per node
+    primaries, shared = [], []
+    monkeypatch.setattr(nbx, "ensure_primary_ip",
+                        lambda d, ip, h=None: primaries.append((d, ip)) or 1)
+    monkeypatch.setattr(nbx, "ensure_shared_primary_ip",
+                        lambda d, ip, h=None: shared.append((d, ip)) or 2)
+
+    # probe from the PRIMARY unit
+    primary_id = nbx.ensure_fortigate_device({
+        "ip": "192.0.2.71", "serial": "FG180FTK21901250",
+        "model": "FortiGate 1800F", "hostname": "HQ",
+        "manufacturer": "Fortinet", "firmware": "v7.2.13"}, ha=_HA)
+
+    # two devices, distinct serials, each its own hostname
+    assert len(devices_ep.created) == 2
+    by_serial = {p["serial"]: p for p in devices_ep.created}
+    assert set(by_serial) == {"FG180FTK21901250", "FG180FTK22900291"}
+    assert by_serial["FG180FTK21901250"]["name"] == "HQ"
+    assert by_serial["FG180FTK22900291"]["name"] == "HQ-Secondary"
+    # roles + group + peer
+    assert by_serial["FG180FTK21901250"]["custom_fields"]["fortigate_ha_role"] == "primary"
+    assert by_serial["FG180FTK22900291"]["custom_fields"]["fortigate_ha_role"] == "secondary"
+    assert by_serial["FG180FTK21901250"]["custom_fields"]["fortigate_ha_group"] == "Z-Cluster-FW"
+    assert "HQ-Secondary (FG180FTK22900291)" in \
+        by_serial["FG180FTK21901250"]["custom_fields"]["fortigate_ha_peer"]
+    # both share the mgmt IP; primary via ensure_primary_ip, secondary via shared
+    assert primaries == [(primary_id, "192.0.2.71")]
+    assert len(shared) == 1 and shared[0][1] == "192.0.2.71"
+    # primary id returned (interfaces/VLANs/NAT attach there)
+    assert primary_id == next(p for p in devices_ep.items
+                              if getattr(p, "serial", None) == "FG180FTK21901250").id
+
+
+def test_ensure_cisco_device_stack_creates_two_devices_shared_ip(monkeypatch):
+    """A 2-member stack -> TWO devices (active + standby), distinct chassis
+    serials, shared mgmt IP. Single-member -> one device (covered elsewhere)."""
+    devices_ep = FakeEndpoint()
+    monkeypatch.setattr(nbx, "get_netbox", lambda: _fake_api(devices=devices_ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda n: 11)
+    monkeypatch.setattr(nbx, "get_or_create_role", lambda n, *a: 12)
+    monkeypatch.setattr(nbx, "get_or_create_site", lambda n: 13)
+    monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a, **k: 14)
+    monkeypatch.setattr(nbx, "find_device", lambda *a, **k: None)
+    primaries, shared = [], []
+    monkeypatch.setattr(nbx, "ensure_primary_ip",
+                        lambda d, ip, h=None: primaries.append((d, ip)) or 1)
+    monkeypatch.setattr(nbx, "ensure_shared_primary_ip",
+                        lambda d, ip, h=None: shared.append((d, ip)) or 2)
+
+    stack = [
+        {"member": 1, "role": "Active", "mac": "247e.1269.0200",
+         "state": "Ready", "serial": "FOC2148U0U9"},
+        {"member": 2, "role": "Standby", "mac": "247e.12e4.a300",
+         "state": "Ready", "serial": "FCW2148F0RA"},
+    ]
+    active_id = nbx.ensure_cisco_device({
+        "ip": "172.31.1.3", "serial": "FOC2148U0U9",
+        "model": "WS-C3850-24T-S", "hostname": "sw-hq-1",
+        "manufacturer": "Cisco", "firmware": "16.12.1"}, stack=stack)
+
+    assert len(devices_ep.created) == 2
+    by_serial = {p["serial"]: p for p in devices_ep.created}
+    assert set(by_serial) == {"FOC2148U0U9", "FCW2148F0RA"}
+    # active keeps hostname; standby gets -M2
+    assert by_serial["FOC2148U0U9"]["name"] == "sw-hq-1"
+    assert by_serial["FCW2148F0RA"]["name"] == "sw-hq-1-M2"
+    # roles + member count + shared mgmt IP
+    assert by_serial["FOC2148U0U9"]["custom_fields"]["cisco_stack_role"] == "active"
+    assert by_serial["FCW2148F0RA"]["custom_fields"]["cisco_stack_role"] == "standby"
+    assert by_serial["FOC2148U0U9"]["custom_fields"]["cisco_stack_members"] == 2
+    for p in devices_ep.created:
+        assert p["custom_fields"]["cisco_ip"] == "172.31.1.3"
+    # active via ensure_primary_ip, standby via shared
+    assert primaries == [(active_id, "172.31.1.3")]
+    assert len(shared) == 1 and shared[0][1] == "172.31.1.3"
+    # active id returned (interfaces/VLANs/cables attach there)
+    assert active_id == next(p for p in devices_ep.items
+                             if getattr(p, "serial", None) == "FOC2148U0U9").id
+
+
+def test_ensure_cisco_device_single_member_one_device(monkeypatch):
     devices_ep = FakeEndpoint()
     monkeypatch.setattr(nbx, "get_netbox", lambda: _fake_api(devices=devices_ep))
     monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda n: 11)
@@ -1005,45 +1095,45 @@ def test_ensure_fortigate_device_cluster_creates_with_ha_fields(monkeypatch):
     monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a, **k: 14)
     monkeypatch.setattr(nbx, "find_device", lambda *a, **k: None)
 
-    # probe comes from the SECONDARY unit — device must still be the cluster (HQ)
-    nbx.ensure_fortigate_device({
-        "ip": "192.0.2.71", "serial": "FG180FTK22900291",
-        "model": "FortiGate 1800F", "hostname": "HQ-Secondary",
-        "manufacturer": "Fortinet", "firmware": "v7.2.13"}, ha=_HA)
+    nbx.ensure_cisco_device({
+        "ip": "172.31.1.103", "serial": "JAE26480W8Q",
+        "model": "C9200L-48T-4X", "hostname": "sw-single",
+        "manufacturer": "Cisco", "firmware": "17.9.4"},
+        stack=[{"member": 1, "role": "Active", "mac": "d009.c86a.fc80",
+                "state": "Ready", "serial": "JAE26480W8Q"}])
 
-    payload = devices_ep.created[0]
-    assert payload["name"] == "HQ"                          # cluster name, not unit name
-    assert payload["serial"] == "FG180FTK21901250"          # primary serial
-    cf = payload["custom_fields"]
-    assert cf["fortigate_ha_group"] == "Z-Cluster-FW"
-    assert cf["fortigate_ha_mode"] == "a-p"
-    assert "HQ-Secondary (FG180FTK22900291)" in cf["fortigate_ha_peer"]
-    assert cf["fortigate_ha_role"] == "secondary"           # probed unit's role
+    assert len(devices_ep.created) == 1
+    assert "cisco_stack_role" not in devices_ep.created[0]["custom_fields"]
 
 
-def test_ensure_fortigate_device_cluster_finds_by_peer_serial(monkeypatch):
-    existing = FakeRecord(7, name="HQ", serial="FG180FTK21901250",
-                          custom_fields={})
-    devices_ep = FakeEndpoint([existing])
+def test_ensure_fortigate_device_cluster_adopts_each_unit_by_serial(monkeypatch):
+    """Each unit matched by its OWN serial (role-agnostic) -> adopted, not
+    duplicated. The AE-created primary record (role Firewall) is reused."""
+    primary = FakeRecord(7, name="HQ", serial="FG180FTK21901250",
+                         role=SimpleNamespace(id=99, name="Firewall"),
+                         custom_fields={"ae_asset_id": "1"})
+    devices_ep = FakeEndpoint([primary])
     monkeypatch.setattr(nbx, "get_netbox", lambda: _fake_api(devices=devices_ep))
     monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda n: 11)
     monkeypatch.setattr(nbx, "get_or_create_role", lambda n, *a: 12)
     monkeypatch.setattr(nbx, "get_or_create_site", lambda n: 13)
     monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a, **k: 14)
+    monkeypatch.setattr(nbx, "find_device",
+                        lambda serial, role_name=None: next(
+                            (d for d in devices_ep.items
+                             if getattr(d, "serial", None) == serial), None))
+    monkeypatch.setattr(nbx, "ensure_primary_ip", lambda *a, **k: 1)
+    monkeypatch.setattr(nbx, "ensure_shared_primary_ip", lambda *a, **k: 2)
 
-    def _find(serial, role_name=None):
-        if serial == "FG180FTK22900291":
-            return existing       # peer serial resolves to the same cluster
-        return None
-    monkeypatch.setattr(nbx, "find_device", _find)
-
-    dev_id = nbx.ensure_fortigate_device({
-        "ip": "192.0.2.71", "serial": "FG180FTK22900291",
-        "model": "FortiGate 1800F", "hostname": "HQ-Secondary",
+    primary_id = nbx.ensure_fortigate_device({
+        "ip": "192.0.2.71", "serial": "FG180FTK21901250",
+        "model": "FortiGate 1800F", "hostname": "HQ",
         "manufacturer": "Fortinet", "firmware": "v7.2.13"}, ha=_HA)
 
-    assert dev_id == 7                    # updated, not duplicated
-    assert devices_ep.created == []
+    # primary adopted (id=7), secondary created -> exactly one new device
+    assert primary_id == 7
+    assert len(devices_ep.created) == 1
+    assert devices_ep.created[0]["serial"] == "FG180FTK22900291"
 
 
 def test_sync_fortigate_interfaces_bulk_and_vlan_subif(monkeypatch):

@@ -60,6 +60,43 @@ def _parse_show_inventory(text):
     if cur: rows.append(cur)
     return rows
 
+
+def _parse_show_switch(text):
+    """Parse `show switch` member table -> [{member, role, mac, state}].
+    Rows look like: '*1       Active   d009.c86a.fc80     1      V03     Ready'
+    or ' 2       Standby  8c84.4245.f800     1      V03     Ready'."""
+    members = []
+    for line in text.splitlines():
+        m = re.match(
+            r'^\s*\*?\s*(\d+)\s+(Active|Standby|Member)\s+([0-9a-f.]{14})\s+'
+            r'(\d+)\s+(\S+)\s+(\S+)', line, re.IGNORECASE)
+        if m:
+            members.append({
+                "member": int(m.group(1)),
+                "role":   m.group(2).capitalize(),   # Active / Standby / Member
+                "mac":    m.group(3),
+                "state":  m.group(6),
+            })
+    return members
+
+
+def _stack_members(switch_rows, inv_rows):
+    """Join `show switch` members with their chassis serials from
+    `show inventory` ('Switch N' entries) -> [{member, role, mac, serial}].
+    Only members with a real chassis serial are kept."""
+    serial_by_member = {}
+    for row in inv_rows:
+        m = re.match(r'^Switch\s+(\d+)$', (row.get("name") or "").strip(),
+                     re.IGNORECASE)
+        if m and row.get("sn"):
+            serial_by_member[int(m.group(1))] = row["sn"].strip()
+    out = []
+    for mem in switch_rows:
+        serial = serial_by_member.get(mem["member"])
+        if serial:
+            out.append({**mem, "serial": serial})
+    return out
+
 _INTF_STATUS_RE = re.compile(
     r'^(\S+)\s+(.*?)\s+'
     r'(connected|notconnect|disabled|err-disabled|inactive|monitoring|suspended)\s+'
@@ -460,6 +497,17 @@ def cisco_collect_inventory(ip):
             mac_table = []
             log("WARN", f"  show mac address-table failed: {exc}")
 
+        # stack membership (single-member stacks -> a 1-entry list)
+        try:
+            switch_rows = _parse_show_switch(sess.run("show switch"))
+            stack = _stack_members(switch_rows, inv_rows)
+            if len(stack) > 1:
+                log("INFO", f"  stack: {len(stack)} members "
+                            f"({', '.join(m['role'] for m in stack)})")
+        except Exception as exc:
+            stack = []
+            log("WARN", f"  show switch failed: {exc}")
+
         inventory = {}
         add_item = _make_add_item(inventory)
         for row in inv_rows:
@@ -476,7 +524,8 @@ def cisco_collect_inventory(ip):
         return {"summary": summary, "ports": ports,
                 "neighbors": neighbors, "inventory": inventory,
                 "vlans": vlans, "trunks": trunks, "vtp": vtp,
-                "ip_brief": ip_brief, "mac_table": mac_table}
+                "ip_brief": ip_brief, "mac_table": mac_table,
+                "stack": stack}
     finally:
         sess.logout()
 

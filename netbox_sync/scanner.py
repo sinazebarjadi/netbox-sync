@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from netbox_sync.collectors.brocade import probe_san_switch
 from netbox_sync.collectors.cisco import probe_cisco_switch
 from netbox_sync.collectors.fortigate import probe_fortigate
+from netbox_sync.collectors.fortiweb import probe_fortiweb
+from netbox_sync.collectors.ftd import probe_ftd
 from netbox_sync.collectors.hikvision import probe_hikvision
 from netbox_sync.collectors.dahua import probe_dahua
 from netbox_sync.collectors.unv import probe_unv
@@ -15,8 +17,8 @@ from netbox_sync.collectors.unifi import probe_unifi
 from netbox_sync.config import (BMC_RANGES, STORAGE_RANGES, SAN_RANGES,
                                 CISCO_RANGES, FORTIGATE_RANGES, RUCKUS_RANGES,
                                 HIKVISION_RANGES, UNIFI_RANGES,
-                                DAHUA_RANGES, UNV_RANGES,
-                                SCAN_WORKERS, log)
+                                DAHUA_RANGES, UNV_RANGES, FORTIWEB_RANGES,
+                                FMC_RANGES, SCAN_WORKERS, log)
 from netbox_sync.utils import expand_ranges
 from netbox_sync.report import classify_error, record_probe_failure
 
@@ -48,8 +50,8 @@ def _drain_pool(ex, futures, on_hit):
 
 def scan_all():
     all_found = {"servers": [], "storage": [], "san_switches": [], "cisco_switches": [],
-                 "fortigates": [], "ruckus": [], "hikvision_nvrs": [], "unifi": [],
-                 "dahua_nvrs": [], "unv_nvrs": []}
+                 "fortigates": [], "fortiwebs": [], "ftds": [], "ruckus": [],
+                 "hikvision_nvrs": [], "unifi": [], "dahua_nvrs": [], "unv_nvrs": []}
 
     bmc_ips = expand_ranges(BMC_RANGES)
     if bmc_ips:
@@ -150,6 +152,50 @@ def scan_all():
             log("INFO", "No FortiGate IPs to scan (all excluded).")
     else:
         log("INFO", "FortiGate ranges not configured — skipping FortiGate scan.")
+
+    # ── FortiWeb WAFs (REST API, opt-in family) ─────────────────────────────
+    if FORTIWEB_RANGES:
+        used_ips = used_ips | {h["ip"] for h in all_found["fortigates"]}
+        all_fw_ips = expand_ranges(FORTIWEB_RANGES)
+        fw_ips = [ip for ip in all_fw_ips if ip not in used_ips]
+        skipped_fw = len(all_fw_ips) - len(fw_ips)
+        if skipped_fw:
+            log("INFO", f"Skipped {skipped_fw} IP(s) in FortiWeb ranges already found.")
+        if fw_ips:
+            log("INFO", f"Scanning {len(fw_ips)} IPs for FortiWeb WAFs (API) ...")
+            ex = ThreadPoolExecutor(max_workers=SCAN_WORKERS)
+            futures = {ex.submit(probe_fortiweb, ip): ip for ip in fw_ips}
+            def _on_fw(r):
+                log("INFO", f"  + FORTIWEB {r['ip']}  {r['model']}  s/n={r['serial']}")
+                all_found["fortiwebs"].append(r)
+            _on_fw.__family__ = "FortiWeb"
+            _drain_pool(ex, futures, _on_fw)
+            log("INFO", f"FortiWeb scan done: {len(all_found['fortiwebs'])} found.")
+        else:
+            log("INFO", "No FortiWeb IPs to scan (all excluded).")
+    else:
+        log("INFO", "FortiWeb ranges not configured — skipping FortiWeb scan.")
+
+    # ── Cisco FTDs via FMC (REST API, opt-in family) ────────────────────────
+    # Each range IP is an FMC appliance; its managed FTDs are the targets.
+    if FMC_RANGES:
+        used_ips = used_ips | {h["ip"] for h in all_found["fortiwebs"]}
+        all_fmc_ips = expand_ranges(FMC_RANGES)
+        fmc_ips = [ip for ip in all_fmc_ips if ip not in used_ips]
+        if fmc_ips:
+            log("INFO", f"Scanning {len(fmc_ips)} IPs for Cisco FMCs (API) ...")
+            ex = ThreadPoolExecutor(max_workers=SCAN_WORKERS)
+            futures = {ex.submit(probe_ftd, ip): ip for ip in fmc_ips}
+            def _on_fmc(r):
+                log("INFO", f"  + FMC {r['ip']}  (FTD management)")
+                all_found["ftds"].append(r)
+            _on_fmc.__family__ = "FTD"
+            _drain_pool(ex, futures, _on_fmc)
+            log("INFO", f"FMC scan done: {len(all_found['ftds'])} found.")
+        else:
+            log("INFO", "No FMC IPs to scan (all excluded).")
+    else:
+        log("INFO", "FMC ranges not configured — skipping FTD scan.")
 
     # ── Ruckus ZoneDirectors (SSH, opt-in family) ───────────────────────────
     if RUCKUS_RANGES:

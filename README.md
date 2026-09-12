@@ -84,6 +84,7 @@ Every family is **opt-in**: set its `*_RANGES` in `.env`; leave empty to disable
 | 🧵 **SAN switches** | Brocade / HPE B-Series | SSH CLI (Fabric OS) | `switchshow`, `version`, `nsshow`, `nscamshow`, `sfpshow` |
 | 🌐 **LAN switches** | Cisco Catalyst (IOS / IOS-XE) | SSH via netmiko | `show version`, `show inventory`, `show interfaces status`, `show vlan brief`, `show interfaces trunk`, `show cdp/lldp neighbors detail`, `show mac address-table`, `show ip interface brief`, `show vtp status` |
 | 🔥 **Firewalls** | FortiGate (FortiOS 6/7) | REST session + SSH extras | `POST /logincheck`, `/monitor/system/*`, `/cmdb/system/interface`, HA monitors, VIPs/IP pools; SSH: `diagnose lldp neighbor-summary`, `diagnose sys transceiver list` |
+| 🛡️ **WAFs** | FortiWeb 1000E/1000F (7.2+) | HTTPS header-token API | `Authorization: base64({"username","password","vdom"})`; `/api/v2.0/system/status.systemstatus`, `status.systemresource`, `/cmdb/system/interface` |
 | 📡 **Wireless (Ruckus)** | ZoneDirector ZD1200-class | SSH interactive shell | `show sysinfo`, `show ap all`, `show ap <mac>` (AP serials), `show wlan all` |
 | 📶 **Wireless (Ubiquiti)** | UniFi OS consoles (UDM/CloudKey/Server) | HTTPS session API | `POST /api/login`, `/api/self/sites`, per-site `stat/device`, `rest/wlanconf`, `rest/networkconf` |
 | 🎥 **NVRs (Hikvision)** | DS-96xx/77xx NVRs | HTTP digest (ISAPI) | `/ISAPI/System/deviceInfo`, `ContentMgmt/InputProxy/channels(+status)`, `ContentMgmt/Storage/hdd` (NVR disks), per-channel proxied `deviceInfo` |
@@ -114,6 +115,7 @@ ManageEngine AssetExplorer (`sync_assetexplorer.py`) runs as a secondary data so
 | SAN switch | `SAN Switch` | serial / WWN | model, Fabric OS, port count |
 | Cisco switch | `Switch` | serial | IOS version, port count |
 | FortiGate | `Firewall` | serial (cluster = primary) | HA role/peers; HA pair merges into **one** device |
+| FortiWeb | `WAF` | serial | `fortiweb_*` fields; operation mode + HA status; hostname falls back to `fortiweb-<ip>` when unset |
 | Ruckus ZD | `Wireless Controller` | serial | HA pairs merge via `RUCKUS_HA_MAP` |
 | UniFi console | `Wireless Controller` | console UUID | per-site AP/WLAN aggregation |
 | APs (Ruckus + UniFi) | `Access Point` | **MAC** (`wap_mac`) / Serial | Serial collected via `show ap <mac>` (Ruckus) or derived from MAC (UniFi) |
@@ -123,7 +125,7 @@ ManageEngine AssetExplorer (`sync_assetexplorer.py`) runs as a secondary data so
 
 ### Custom fields
 
-All 69 `*_ip` / `*_enabled` / `ae_*` / model / firmware / count fields are **auto-created at sync start** (`dcim.device`, `ui_visible=if-set`) and normalized at the end of every run.
+All 76 `*_ip` / `*_enabled` / `ae_*` / model / firmware / count fields are **auto-created at sync start** (`dcim.device`, `ui_visible=if-set`) and normalized at the end of every run.
 
 ---
 
