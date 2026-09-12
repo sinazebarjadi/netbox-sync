@@ -196,7 +196,8 @@ def _extract_chassis_serial(storage, system_row=None):
             name = (row.get("name") or "").upper()
             shortname = (row.get("fru-shortname") or "").lower()
             if "CHASSIS" in name or "MIDPLANE" in name or "midplane" in shortname or "chassis" in shortname:
-                sn = row.get("serial-number") or row.get("configuration-serialnumber")
+                # Prefer configuration-serialnumber (physical chassis), fall back to serial-number
+                sn = row.get("configuration-serialnumber") or row.get("serial-number")
                 if sn and not sn.startswith("00C0FF"):
                     return sn.strip()
     except Exception:
@@ -206,9 +207,10 @@ def _extract_chassis_serial(storage, system_row=None):
     try:
         enc_rows = storage.show("enclosures")
         if enc_rows:
-            sn = enc_rows[0].get("midplane-serial-number") or enc_rows[0].get("serial-number")
-            if sn and not sn.startswith("00C0FF"):
-                return sn.strip()
+            for row in enc_rows:
+                sn = row.get("midplane-serial-number") or row.get("serial-number")
+                if sn and not sn.startswith("00C0FF"):
+                    return sn.strip()
     except Exception:
         pass
 
