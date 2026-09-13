@@ -2,12 +2,13 @@
 """Sync a single device to NetBox by IP, without running the full discovery.
 
 Usage:
-    python sync_single_device.py <ip> [--type server|storage|san|cisco|fortigate|ruckus|unifi|hikvision|dahua|unv]
+    python sync_single_device.py <ip> [--type server|storage|san|cisco|fortigate|ruckus|unifi|hikvision|dahua|unv|ftd]
 
 Examples:
     python sync_single_device.py 192.168.19.70
     python sync_single_device.py 172.31.2.202 --type ruckus
     python sync_single_device.py 192.168.244.66 --type dahua
+    python sync_single_device.py 192.168.16.143 --type ftd    # FMC IP, syncs all managed FTDs
 """
 import argparse
 import sys
@@ -18,7 +19,8 @@ from netbox_sync.netbox import (get_netbox, ensure_custom_fields,
                                 ensure_san_switch_device, ensure_cisco_device,
                                 ensure_fortigate_device, ensure_ruckus_device,
                                 ensure_unifi_console, ensure_hikvision_device,
-                                ensure_dahua_device, ensure_unv_device)
+                                ensure_dahua_device, ensure_unv_device,
+                                ensure_ftd_device)
 from netbox_sync.collectors.redfish import probe_redfish, rf_collect_inventory
 from netbox_sync.collectors.msa import probe_storage, storage_collect_inventory
 from netbox_sync.collectors.brocade import probe_san_switch, san_collect_inventory
@@ -29,6 +31,7 @@ from netbox_sync.collectors.unifi import probe_unifi, unifi_collect
 from netbox_sync.collectors.hikvision import probe_hikvision, hikvision_collect
 from netbox_sync.collectors.dahua import probe_dahua, dahua_collect
 from netbox_sync.collectors.unv import probe_unv, unv_collect
+from netbox_sync.collectors.ftd import probe_ftd, ftd_collect
 from netbox_sync.sync import process_nvrs, sync_inventory, ensure_primary_ip
 
 FAMILIES = {
@@ -42,12 +45,13 @@ FAMILIES = {
     "hikvision": (probe_hikvision, hikvision_collect, ensure_hikvision_device),
     "dahua":     (probe_dahua, dahua_collect, ensure_dahua_device),
     "unv":       (probe_unv, unv_collect, ensure_unv_device),
+    "ftd":       (probe_ftd, ftd_collect, ensure_ftd_device),
 }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Sync a single device to NetBox by IP")
-    parser.add_argument("ip", help="IP address of the device")
+    parser.add_argument("ip", help="IP address of the device (for FTD: the FMC management IP)")
     parser.add_argument("--type", choices=list(FAMILIES.keys()),
                         help="Device family (auto-detect if omitted)")
     args = parser.parse_args()
@@ -74,9 +78,25 @@ def main():
 
         log("INFO", f"  {ip} identified as {fam}: {probe.get('model')} / {probe.get('serial')}")
         try:
+            data = collect_fn(ip)
+
+            if fam == "ftd":
+                # FTD path: the IP is the FMC; enumerate all managed FTDs
+                synced = 0
+                for ftd in data["ftds"]:
+                    mgmt_ip = ftd.get("mgmt_ip")
+                    try:
+                        dev_id = ensure_fn(ftd, fmc_ip=ip)
+                        if mgmt_ip:
+                            ensure_primary_ip(dev_id, mgmt_ip, ftd.get("name"))
+                        synced += 1
+                    except Exception as e:
+                        log("ERROR", f"  FTD sync failed for {ftd.get('name')}: {e}")
+                log("INFO", f"  [OK] FMC {ip} — {synced} FTDs synced")
+                return 0
+
             dev_id = ensure_fn(probe)
             ensure_primary_ip(dev_id, ip, probe.get("hostname"))
-            data = collect_fn(ip)
             if fam in ("hikvision", "dahua", "unv"):
                 # NVR path: process cameras + HDDs
                 process_nvrs([probe], collect_fn, ensure_fn, fam, {}, {}, api)
