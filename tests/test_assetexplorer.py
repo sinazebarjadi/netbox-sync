@@ -339,7 +339,8 @@ def test_name_collision_adopts_blank_serial_device(monkeypatch):
     assert ep.updated and ep.updated[0]["id"] == 21
     assert ep.updated[0]["asset_tag"] == "41510140"
     assert "name" not in ep.updated[0]
-    assert "serial" not in ep.updated[0]
+    # Serial is filled from ME as fallback (Redfish will overwrite later)
+    assert ep.updated[0]["serial"] == "MXQ62800GS"
 
 
 def test_name_collision_with_different_serial_is_skipped(monkeypatch):
@@ -382,11 +383,12 @@ def test_name_fallback_syncs_tag_when_serial_missing_in_netbox(monkeypatch):
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0
     assert ep.update_calls == 1
-    # Only asset_tag and ae_department enriched; name/serial untouched
+    # Only asset_tag, ae_department, and serial enriched; name untouched
     assert ep.updated[0]["id"] == 21
     assert ep.updated[0]["asset_tag"] == "41510140"
     assert "name" not in ep.updated[0]
-    assert "serial" not in ep.updated[0]
+    # Serial filled from ME as fallback (Redfish will overwrite later)
+    assert ep.updated[0]["serial"] == "MXQ62800GS"
 
 
 def test_name_fallback_ambiguous_name_skips(monkeypatch, capsys):
@@ -422,7 +424,8 @@ def test_name_fallback_with_site_disambiguation(monkeypatch):
     assert ep.update_calls == 1
     assert ep.updated[0]["id"] == 2
     assert "name" not in ep.updated[0]
-    assert "serial" not in ep.updated[0]
+    # Serial filled from ME as fallback (Redfish will overwrite later)
+    assert ep.updated[0]["serial"] == "NEW123"
 
 
 def test_serial_less_ae_asset_matched_by_name_not_created(monkeypatch):
@@ -473,11 +476,12 @@ def test_serial_held_by_different_name_uses_name_fallback(monkeypatch, capsys):
     ae_sync.sync_assetexplorer()
     # wrong device untouched
     assert not any(u.get("id") == 1 for u in ep.updated)
-    # right device got the tag; name/serial NOT overwritten
+    # right device got the tag; name NOT overwritten
     upd = [u for u in ep.updated if u.get("id") == 2]
     assert upd and upd[0]["asset_tag"] == "41510148"
     assert "name" not in upd[0]
-    assert "serial" not in upd[0]
+    # Serial filled from ME as fallback (Redfish will overwrite later)
+    assert upd[0]["serial"] == "MXQ714055Z"
     assert "held by" in capsys.readouterr().out
 
 

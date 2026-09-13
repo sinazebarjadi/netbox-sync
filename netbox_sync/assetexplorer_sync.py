@@ -147,6 +147,7 @@ def sync_assetexplorer():
             # existing value in NetBox. It only fills fields that are EMPTY:
             # 1. asset_tag: if NetBox has no asset tag and ME provides one
             # 2. ae_department: if NetBox has no department and ME has one
+            # 3. serial: if NetBox has no serial and ME provides one
             update_payload = {"id": cur.id}
             changed = False
 
@@ -166,6 +167,16 @@ def sync_assetexplorer():
                 update_payload["custom_fields"] = cf
                 changed = True
 
+            # Serial fallback: fill NetBox serial from ME ONLY when empty.
+            # The discovery automation (Redfish/iLO) is the primary source —
+            # if it later provides a serial, it will overwrite this value
+            # on the next run (source of truth). ME is the fallback.
+            nb_serial = (cur.serial or "").strip()
+            ae_serial = (rec.get("serial") or "").strip()
+            if not nb_serial and ae_serial and not _invalid_serial(ae_serial):
+                update_payload["serial"] = ae_serial
+                changed = True
+
             if changed:
                 try:
                     api.dcim.devices.update([update_payload])
@@ -173,6 +184,9 @@ def sync_assetexplorer():
                         tags_synced += 1
                         log("INFO", f"  asset-tag populated: {rec.get('serial')} "
                                     f"{cur.name} -> {ae_tag}")
+                    if "serial" in update_payload:
+                        log("INFO", f"  serial populated (ME fallback): "
+                                    f"{cur.name} -> {ae_serial}")
                 except Exception as e:
                     if "asset tag already exists" in str(e):
                         matched_skipped += 1
