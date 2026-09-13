@@ -201,6 +201,28 @@ def probe_hikvision(ip, retries=2, retry_delay=3):
     return None
 
 
+def _extract_camera_serial(raw_serial):
+    """Extract the actual hardware serial from a Hikvision combined string.
+
+    The NVR returns a combined string like:
+      DS-2CD1153G0-I20230406AAWRL50293421
+    The actual camera serial (matching ManageEngine) is the trailing 9 chars:
+      L50293421
+
+    Generic: works for all Hikvision camera models where the NVR returns
+    a combined model-date-factory-serial string. If the serial is already
+    short (≤9 chars), returns as-is."""
+    if not raw_serial:
+        return raw_serial
+    s = str(raw_serial).strip()
+    if len(s) >= 9:
+        candidate = s[-9:]
+        # Validate: starts with 1-2 letters, rest is alphanumeric
+        if re.match(r'^[A-Z]{1,2}[A-Z0-9]{7,8}$', candidate):
+            return candidate
+    return s
+
+
 def hikvision_collect(ip):
     """Full collection: NVR identity + camera list with online status and MAC.
     Camera MACs are not in the channel list — each camera's MAC is fetched from
@@ -248,7 +270,10 @@ def hikvision_collect(ip):
                 cam["mac"] = ci.get("mac")
                 # the proxied deviceInfo is authoritative for model/serial/fw
                 cam["model"] = ci.get("model") or cam.get("model")
-                cam["serial"] = ci.get("serial") or cam.get("serial")
+                # Normalize: extract the actual hardware serial from the
+                # combined NVR string (e.g. DS-2CD...AAWRL50293421 -> L50293421)
+                raw_serial = ci.get("serial") or cam.get("serial")
+                cam["serial"] = _extract_camera_serial(raw_serial)
                 cam["firmware"] = ci.get("firmware") or cam.get("firmware")
         log("INFO", f"  hikvision: {len(cameras)} cameras "
                     f"({sum(1 for c in cameras if c['online'])} online, "
