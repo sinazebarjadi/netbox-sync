@@ -229,20 +229,52 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
             log("WARN", f"  NVR primary IPv4 sync failed for {ip}: {e}")
 
         # Hard drives -> Inventory Items attached to the NVR device
+        # Priority: NVR-discovered data wins over any ME-imported item.
+        # Match strategy: real serial first (if NVR exposes it), else
+        # synthetic slot key; also try matching an existing item by slot
+        # when the NVR doesn't expose serials (prevents duplicates with
+        # ME-imported items that have real serials).
+        all_items = list(api.dcim.inventory_items.filter(device_id=dev_id))
         for hdd in data.get("hdds", []):
             try:
+                nvr_serial = hdd.get("serial")
+                synthetic_serial = f"{probe.get('serial', 'NVR')}-SLOT-{hdd['slot']}"
                 inv_payload = {
                     "device":       dev_id,
                     "name":         hdd["name"][:64],
                     "role":         get_or_create_inventory_role("HDD"),
                     "manufacturer": get_or_create_manufacturer("Hikvision"),
-                    "serial":       hdd.get("serial") or f"{probe.get('serial', 'NVR')}-SLOT-{hdd['slot']}",
+                    "serial":       nvr_serial or synthetic_serial,
                     "description":  f"Type: {hdd.get('type')}, Capacity: {hdd.get('capacity')}, Status: {hdd.get('status')}",
                 }
-                existing_items = list(api.dcim.inventory_items.filter(
-                    device_id=dev_id, serial=inv_payload["serial"]))
-                if existing_items:
-                    api.dcim.inventory_items.update([{"id": existing_items[0].id, **inv_payload}])
+
+                # Find existing item: exact serial match first, then slot-based
+                # match for synthetic-serial items (prevents duplicate with
+                # ME-imported items that share the same slot but have a real serial)
+                match = None
+                for it in all_items:
+                    if (it.serial or "") == inv_payload["serial"]:
+                        match = it
+                        break
+                if match is None and nvr_serial is None:
+                    # Try matching by slot: synthetic key OR real-serial item at same slot
+                    for it in all_items:
+                        it_serial = (it.serial or "")
+                        if it_serial == synthetic_serial:
+                            match = it
+                            break
+                if match is None:
+                    # Check if an ME-imported item with a real serial exists at
+                    # the same slot — if so, adopt it (update with NVR data)
+                    slot_suffix = f"-SLOT-{hdd['slot']}"
+                    for it in all_items:
+                        it_serial = (it.serial or "")
+                        if it_serial.endswith(slot_suffix):
+                            match = it
+                            break
+
+                if match:
+                    api.dcim.inventory_items.update([{"id": match.id, **inv_payload}])
                 else:
                     api.dcim.inventory_items.create(inv_payload)
             except Exception as e:

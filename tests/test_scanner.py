@@ -131,6 +131,7 @@ def test_process_nvrs_sweep_keeps_camera_when_channel_still_reported(monkeypatch
     data = {"summary": {"name": "NVR1", "model": "M", "firmware": "F"},
             "cameras": [{"channel": 3, "serial": None, "name": "C3",
                          "online": True, "ip": None}]}
+    api.dcim.inventory_items = FakeEndpoint([])   # no pre-existing HDDs
     sync_mod.process_nvrs([{"ip": "10.0.0.9"}], lambda ip: data,
                           lambda probe: 7, "Test", {}, {}, api)
     assert offlined == []
@@ -151,6 +152,7 @@ def test_process_nvrs_sweep_offlines_truly_missing_camera(monkeypatch):
     data = {"summary": {"name": "NVR1", "model": "M", "firmware": "F"},
             "cameras": [{"channel": 3, "serial": "S1", "name": "C3",
                          "online": True, "ip": None}]}
+    api.dcim.inventory_items = FakeEndpoint([])   # no pre-existing HDDs
     sync_mod.process_nvrs([{"ip": "10.0.0.9"}], lambda ip: data,
                           lambda probe: 7, "Test", {}, {}, api)
     assert offlined == [(5, "C9")]
@@ -205,6 +207,7 @@ def test_process_nvrs_retries_collect_once(monkeypatch):
         return {"summary": {"name": "NVR1"}, "cameras": []}
 
     api = _fake_api(devices=FakeEndpoint())
+    api.dcim.inventory_items = FakeEndpoint([])
     monkeypatch.setattr(sync_mod, "ensure_primary_ip", lambda *a, **k: None)
     monkeypatch.setattr(sync_mod.time, "sleep", lambda s: None)
     live = sync_mod.process_nvrs([{"ip": "10.0.0.9"}], flaky_collect,
