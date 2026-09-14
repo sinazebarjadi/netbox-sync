@@ -223,6 +223,25 @@ def _extract_camera_serial(raw_serial):
     return s
 
 
+def _is_placeholder_camera(cam):
+    """Detect empty/unconfigured NVR channels that should NOT become devices.
+
+    A placeholder has no meaningful identification data — no serial, no IP,
+    no model, no real name (just "ChannelXX"). These are empty NVR slots
+    that must never create NetBox devices."""
+    serial = (cam.get("serial") or "").strip()
+    ip = (cam.get("ip") or "").strip()
+    model = (cam.get("model") or "").strip()
+    name = (cam.get("name") or "").strip()
+    # If it has any real identifier, it's a real camera
+    if serial or ip or model:
+        return False
+    # If the name is just a channel placeholder pattern, skip it
+    if not name or name.lower().startswith("channel"):
+        return True
+    return False
+
+
 def hikvision_collect(ip):
     """Full collection: NVR identity + camera list with online status and MAC.
     Camera MACs are not in the channel list — each camera's MAC is fetched from
@@ -246,6 +265,11 @@ def hikvision_collect(ip):
             log("WARN", f"  hikvision channel status failed for {ip}: {exc}")
             status = {}
         for cam in cameras:
+            # Skip placeholder/empty channels — never create devices for them
+            if _is_placeholder_camera(cam):
+                log("DEBUG", f"  hikvision: skipping placeholder channel "
+                             f"{cam.get('channel')}: {cam.get('name')!r}")
+                continue
             cam["online"] = status.get(cam["channel"], False)
             cam["mac"] = None
             if cam.get("channel"):
