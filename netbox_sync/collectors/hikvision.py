@@ -205,20 +205,27 @@ def _extract_camera_serial(raw_serial):
     """Extract the actual hardware serial from a Hikvision combined string.
 
     The NVR returns a combined string like:
-      DS-2CD1153G0-I20230406AAWRL50293421
-    The actual camera serial (matching ManageEngine) is the trailing 9 chars:
-      L50293421
+      DS-2CD1143G0-I20240823AAWRFM4429236
+      DS-2CD2143G2-I20210602AAWRF98498474
+      DS-2CD1153G0-I20190730AAWR237743470
+
+    The actual physical serial (printed on the camera, matching ManageEngine)
+    is everything after the last 'AWR' marker:
+      FM4429236, F98498474, 237743470
 
     Generic: works for all Hikvision camera models where the NVR returns
-    a combined model-date-factory-serial string. If the serial is already
-    short (≤9 chars), returns as-is."""
+    a combined model-date-factory-serial string. If the serial doesn't
+    contain 'AWR', returns as-is (already a plain serial)."""
     if not raw_serial:
         return raw_serial
     s = str(raw_serial).strip()
-    if len(s) >= 9:
-        candidate = s[-9:]
-        # Validate: starts with 1-2 letters, rest is alphanumeric
-        if re.match(r'^[A-Z]{1,2}[A-Z0-9]{7,8}$', candidate):
+    # Find the LAST occurrence of 'AWR' and take everything after it
+    idx = s.rfind("AWR")
+    if idx >= 0 and idx + 3 < len(s):
+        candidate = s[idx + 3:]
+        # Validate: 1-2 leading letters + alphanumeric, OR purely numeric
+        if re.match(r'^[A-Z]{1,2}[A-Z0-9]{5,}$', candidate) or \
+           re.match(r'^\d{5,}$', candidate):
             return candidate
     return s
 

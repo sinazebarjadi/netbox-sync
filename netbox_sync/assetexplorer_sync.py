@@ -298,21 +298,28 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
     # Rule 2: Check if an inventory item with this serial already exists ANYWHERE
     # in NetBox (not just on this device). One physical item = one serial = one
     # inventory item across the entire inventory.
+    # But: if the serial already exists on the SAME device we're attaching to,
+    # that's fine — we'll update it in place below.
     cands = list(api.dcim.inventory_items.filter(serial=serial))
     if cands:
-        # Prefer the item from the main automation (discovery) if it exists
-        # over an ME-imported item. The main automation is the source of truth.
+        # Check if any match is on a DIFFERENT real device (not warehouse, not this device)
         for c in cands:
-            dev = c.device
-            if dev and dev.name and "Warehouse-Stock" not in dev.name:
-                # Found on a real device (not a warehouse container) — skip
+            dev = getattr(c, "device", None)
+            dev_name = dev.name if dev else ""
+            dev_id = dev.id if dev else None
+            if dev_name and "Warehouse-Stock" not in dev_name and dev_id != parent.id:
+                # Found on a DIFFERENT real device — skip (main automation owns it)
                 log("DEBUG", f"  inventory item {serial} already exists on "
-                            f"{dev.name} (id={c.id}) — skipping ME import")
+                            f"{dev_name} (id={c.id}) — skipping ME import")
                 return "skipped"
-        # All matches are on warehouse containers — the item is stock, not installed
-        log("DEBUG", f"  inventory item {serial} exists only in warehouse — "
-                    f"importing to real device")
-        cands = []   # proceed to create on the real device
+        # All matches are on warehouse containers or on this same device — proceed
+        if any(getattr(c, "device", None) and getattr(c.device, "id", None) == parent.id
+               for c in cands):
+            pass   # will be handled by the per-device check below
+        else:
+            log("DEBUG", f"  inventory item {serial} exists only in warehouse — "
+                        f"importing to real device")
+            cands = []   # proceed to create on the real device
     role_id = get_or_create_inventory_role(rec.get("component_role") or "Other")
     mfr_id = get_or_create_manufacturer(rec.get("manufacturer") or "Unknown")
 

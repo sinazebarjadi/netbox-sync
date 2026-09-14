@@ -516,6 +516,8 @@ def test_inventory_item_skipped_when_unchanged(monkeypatch):
                                serial="LIT20250K6Y", role=8, manufacturer=5,
                                part_id="power switch",
                                description="Department: ICT | Asset Tag: 41510140")
+    # FakeRecord needs a .device attribute for the global serial check
+    existing_item.device = parent
     inv_ep = FakeEndpoint([existing_item])
     devices_ep = FakeEndpoint([parent])
 
@@ -544,6 +546,7 @@ def test_inventory_item_updated_when_field_changes(monkeypatch):
     existing_item = FakeRecord(50, device_id=10, name="LIT20250K6Y",
                                serial="LIT20250K6Y", role=8, manufacturer=5,
                                description="old desc")
+    existing_item.device = parent
     inv_ep = FakeEndpoint([existing_item])
     devices_ep = FakeEndpoint([parent])
 
