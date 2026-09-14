@@ -256,7 +256,13 @@ def sync_assetexplorer():
 def _ensure_inventory_item(api, rec, existing_devices, by_name):
     """Sync a component (Power Module, HARD-Hardware, HARD-CCTV, NM Module)
     as a NetBox Inventory Item attached to its parent device (via used_by_asset)
-    or to the single HQ Warehouse-Stock container if unattached."""
+    or to the single HQ Warehouse-Stock container if unattached.
+
+    HDD fallback chain:
+      1. NVR-direct discovery (Hikvision ISAPI) — primary, always tried first
+      2. ManageEngine HARD-CCTV with used_by_asset -> NVR — fallback for
+         NVRs where direct discovery fails (Dahua 501, Uniview 599)
+    """
     serial = rec["serial"]
     parent = None
 
@@ -290,6 +296,7 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
             })
 
     # Rule 2: Check if an inventory item with this serial already exists on this device
+    # Also check for NVR-discovered items with synthetic serials (Hikvision)
     cands = list(api.dcim.inventory_items.filter(device_id=parent.id, serial=serial))
     role_id = get_or_create_inventory_role(rec.get("component_role") or "Other")
     mfr_id = get_or_create_manufacturer(rec.get("manufacturer") or "Unknown")
