@@ -295,9 +295,24 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
                 "comments": "Container for offline/spare inventory items from AssetExplorer"
             })
 
-    # Rule 2: Check if an inventory item with this serial already exists on this device
-    # Also check for NVR-discovered items with synthetic serials (Hikvision)
-    cands = list(api.dcim.inventory_items.filter(device_id=parent.id, serial=serial))
+    # Rule 2: Check if an inventory item with this serial already exists ANYWHERE
+    # in NetBox (not just on this device). One physical item = one serial = one
+    # inventory item across the entire inventory.
+    cands = list(api.dcim.inventory_items.filter(serial=serial))
+    if cands:
+        # Prefer the item from the main automation (discovery) if it exists
+        # over an ME-imported item. The main automation is the source of truth.
+        for c in cands:
+            dev = c.device
+            if dev and dev.name and "Warehouse-Stock" not in dev.name:
+                # Found on a real device (not a warehouse container) — skip
+                log("DEBUG", f"  inventory item {serial} already exists on "
+                            f"{dev.name} (id={c.id}) — skipping ME import")
+                return "skipped"
+        # All matches are on warehouse containers — the item is stock, not installed
+        log("DEBUG", f"  inventory item {serial} exists only in warehouse — "
+                    f"importing to real device")
+        cands = []   # proceed to create on the real device
     role_id = get_or_create_inventory_role(rec.get("component_role") or "Other")
     mfr_id = get_or_create_manufacturer(rec.get("manufacturer") or "Unknown")
 
