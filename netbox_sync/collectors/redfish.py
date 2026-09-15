@@ -431,7 +431,9 @@ def rf_collect_inventory(host):
         except Exception as exc:
             log("DEBUG", f"  PCIe FRU collection skipped on {host}: {exc}")
 
-        # HBA pseudo-serial (Gen9 iLO4)
+        # HBA collection (Gen9 iLO4 / Gen10+ iLO5)
+        # iLO4 does NOT expose HBA serial numbers — use PCI slot + subsystem ID
+        # as a stable pseudo-serial. Extract model from the Name field.
         try:
             pci_col = rf.get(sys_odata.rstrip("/") + "/PCIDevices/")
             pci_items = pci_col.get("Items") or []
@@ -453,11 +455,28 @@ def rf_collect_inventory(host):
                 if device_type in ("SATA Controller",): continue
 
                 is_hba = any(k in name_str for k in
-                             ("HBA","FC","Fibre","Emulex","QLogic","Brocade","SN1100","SN1200"))
+                             ("HBA","FC","Fibre","Emulex","QLogic","Brocade","SN1000","SN1200"))
                 if not is_hba: continue
                 if not structured_name: continue
 
+                # Extract model from Name: "HPE SN1000Q 16Gb 1P FC HBA - FC"
+                # -> model = "SN1000Q", part = "16Gb 1P FC HBA"
+                model = None
+                part = None
+                if " - " in name_str:
+                    model_part, _ = name_str.split(" - ", 1)
+                    # "HPE SN1000Q 16Gb 1P FC HBA" -> model="SN1000Q", part="16Gb 1P FC HBA"
+                    parts = model_part.split(" ", 1)
+                    if len(parts) == 2 and parts[0] == "HPE":
+                        model = parts[1]
+                        part = model_part[len("HPE "):]
+                    else:
+                        model = model_part
+                else:
+                    model = name_str
+
                 subsystem_id  = item.get("SubsystemDeviceID") or "0"
+                vendor_id     = item.get("VendorID") or "0"
                 pseudo_serial = f"{structured_name}-{subsystem_id}"
 
                 already = any(device_location.replace("PCI-E ","").replace(" ","") in v.get("name","")
@@ -476,13 +495,21 @@ def rf_collect_inventory(host):
                         if fw_version: break
                 except Exception: pass
 
+                # Vendor from VendorID (common FC HBA vendors)
+                vendor_map = {
+                    "4215": "Emulex", "4319": "QLogic", "5520": "Brocade",
+                    "4156": "Emulex", "4318": "QLogic",
+                }
+                vendor = vendor_map.get(str(vendor_id), sys.get("Manufacturer") or "HPE")
+
                 add_item(
                     name=name_hba(name_str, device_location),
-                    manufacturer=sys.get("Manufacturer") or "HPE",
-                    part_number=None,
+                    manufacturer=vendor,
+                    part_number=part or model,
                     serial=pseudo_serial,
-                    description=f"Model={name_str} Slot={device_location} "
-                                f"FW={fw_version} (pseudo-serial: no serial via iLO4)",
+                    description=f"Model={model or name_str} Slot={device_location} "
+                                f"FW={fw_version} VendorID={vendor_id} "
+                                f"(pseudo-serial: iLO4 does not expose HBA serial)",
                     role_id=get_or_create_inventory_role("HBA"))
         except Exception as exc:
             log("DEBUG", f"  HBA pseudo-serial collection skipped on {host}: {exc}")
