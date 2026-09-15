@@ -204,29 +204,27 @@ def probe_hikvision(ip, retries=2, retry_delay=3):
 def _extract_camera_serial(raw_serial):
     """Extract the actual hardware serial from a Hikvision combined string.
 
-    The NVR returns a combined string like:
-      DS-2CD1143G0-I20240823AAWRFM4429236
-      DS-2CD2143G2-I20210602AAWRF98498474
-      DS-2CD1153G0-I20190730AAWR237743470
+    Handles both AWR and BWR markers:
+      AWR: DS-2CD1143G0-I20240823AAWRFM4429236 -> FM4429236
+      BWR: DS-2CD1131-I20171110BBWR127086641 -> 127086641
 
     The actual physical serial (printed on the camera, matching ManageEngine)
-    is everything after the last 'AWR' marker:
-      FM4429236, F98498474, 237743470
-
-    Generic: works for all Hikvision camera models where the NVR returns
-    a combined model-date-factory-serial string. If the serial doesn't
-    contain 'AWR', returns as-is (already a plain serial)."""
+    is everything after the last AWR or BWR marker. Some NVRs truncate the
+    serial (e.g. AAWRL5029 -> L5029 instead of L50293444) — we take what the
+    NVR gives us; a truncated serial is still better than the full combined
+    string for matching."""
     if not raw_serial:
         return raw_serial
-    s = str(raw_serial).strip()
-    # Find the LAST occurrence of 'AWR' and take everything after it
-    idx = s.rfind("AWR")
-    if idx >= 0 and idx + 3 < len(s):
-        candidate = s[idx + 3:]
-        # Validate: 1-2 leading letters + alphanumeric, OR purely numeric
-        if re.match(r'^[A-Z]{1,2}[A-Z0-9]{5,}$', candidate) or \
-           re.match(r'^\d{5,}$', candidate):
-            return candidate
+    s = str(raw_serial).strip().strip('"')
+    # Find the LAST occurrence of AWR or BWR and take everything after it
+    for marker in ("AWR", "BWR"):
+        idx = s.rfind(marker)
+        if idx >= 0 and idx + len(marker) < len(s):
+            candidate = s[idx + len(marker):]
+            # Accept any non-empty candidate after the marker — even short ones
+            # (truncated by the NVR). Reject only obviously invalid values.
+            if candidate and len(candidate) >= 2 and not candidate.startswith("-"):
+                return candidate
     return s
 
 
