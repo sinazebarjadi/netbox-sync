@@ -120,7 +120,9 @@ def _normalize(a, stats=None):
                             or (a.get("product") or {}).get("manufacturer")
                             or "").strip() or None),
         "model":          ((a.get("product") or {}).get("name") or "").strip() or None,
-        "part_number":    udf.get("udf_sline_602") or product_name,
+        # Part Number (P/N) from udf_sline_602 — more specific than product.name
+        # (e.g. "C9200L-48P-4X-E V02" vs "C9200L"). Use for device_type.
+        "part_number":    (udf.get("udf_sline_602") or "").strip() or product_name,
         "capacity":       capacity,
         "asset_tag":      (a.get("asset_tag") or "").strip() or None,
         "site":           ((a.get("site") or {}).get("name") or "").strip() or None,

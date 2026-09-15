@@ -383,13 +383,16 @@ def _payload(rec):
     cf = {"ae_asset_id":  str(rec["ae_id"]),
           "ae_department": rec.get("department"),
           "ae_location":   rec.get("location")}
+    # Use Part Number (P/N) for device_type when available (more specific than
+    # product.name, e.g. "C9200L-48P-4X-E V02" vs "C9200L").
+    device_type_model = rec.get("part_number") or rec.get("model")
     return {
         "name": rec["name"][:64],
         "serial": rec["serial"],
         "status": rec["status"],
         "asset_tag": rec.get("asset_tag"),
         "comments": rec.get("description") or "",
-        "device_type": get_or_create_device_type(rec.get("model"), _mfr_id(rec),
+        "device_type": get_or_create_device_type(device_type_model, _mfr_id(rec),
                                                  _model_map(rec)),
         "role": get_or_create_role(rec["role"]),
         "site": get_or_create_site(rec["site"]) if rec.get("site") else None,
