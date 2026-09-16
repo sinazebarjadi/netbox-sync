@@ -45,13 +45,17 @@ def sync_assetexplorer():
 
     # Serial -> device index, single fetch (no N+1). Keys are lower-cased so
     # case differences never split into a duplicate device.
+    # When multiple devices share a serial (ME-created duplicate + the real
+    # automation-discovered device), prefer the one WITHOUT ae_asset_id —
+    # the real device — so the Asset Tag lands on it, not on the ME duplicate.
     existing = {}
     by_name = {}
     by_suffix = {}   # trailing-9-char hardware serial -> devices
     for d in api.dcim.devices.filter():
         s = (d.serial or "").strip().lower()
-        if s and s not in existing:
-            existing[s] = d
+        if s:
+            if s not in existing or not (existing[s].custom_fields or {}).get("ae_asset_id"):
+                existing[s] = d
             sfx = _serial_suffix(s)
             if sfx:
                 by_suffix.setdefault(sfx, []).append(d)
@@ -68,14 +72,64 @@ def sync_assetexplorer():
         if n and n not in by_ae_name:
             by_ae_name[n] = rec
 
+    # ── Layer 1: detect duplicate serials / asset tags inside ME itself ──
+    # When ME has two assets with the same serial, matching by serial is
+    # ambiguous — we must not guess which record's tag to apply.
+    from collections import Counter, defaultdict
+    me_serial_groups = defaultdict(list)
+    for r in assets:
+        me_serial_groups[r["serial"].lower()].append(r)
+    # A serial is a *conflict* only when distinct assets (different names or
+    # different tags) share it. Identical repeats of the same record are
+    # harmless and processed normally.
+    me_dup_serials = set()
+    for s, recs in me_serial_groups.items():
+        names = {(r.get("name") or "").strip().lower() for r in recs}
+        tags = {(r.get("asset_tag") or "").strip().lower() for r in recs}
+        if len(names) > 1 or len(tags) > 1:
+            me_dup_serials.add(s)
+    if me_dup_serials:
+        for s in sorted(me_dup_serials):
+            recs = me_serial_groups[s]
+            names = ", ".join(f"{r['name']!r}(id={r['ae_id']},tag={r.get('asset_tag') or '-'})"
+                              for r in recs)
+            log("WARN", f"  duplicate serial in ME: {s} -> {names}")
+    me_tag_counts = Counter((r.get("asset_tag") or "").strip().lower()
+                            for r in assets if (r.get("asset_tag") or "").strip())
+    me_dup_tags = {t for t, c in me_tag_counts.items() if c > 1}
+    if me_dup_tags:
+        for t in sorted(me_dup_tags):
+            recs = [r for r in assets
+                    if (r.get("asset_tag") or "").strip().lower() == t]
+            names = ", ".join(f"{r['name']!r}(id={r['ae_id']})" for r in recs)
+            log("WARN", f"  duplicate asset tag in ME: {t} -> {names}")
+
     created = tags_synced = matched_skipped = name_matched = failures = 0
-    suffix_matched = skipped_bad_serial = 0
+    suffix_matched = skipped_bad_serial = skipped_me_dup = 0
     inv_items_created = inv_items_updated = inv_items_skipped = 0
     failure_lines = []
 
     for rec in assets:
         serial = rec["serial"]
         rec_name = (rec.get("name") or "").strip().lower()
+
+        # ── Layer 2: duplicate serial in ME — never guess which record wins ──
+        # Allow the record whose NAME matches the NetBox device; skip others.
+        if not _invalid_serial(serial) and serial.lower() in me_dup_serials:
+            candidates = [r for r in assets if r["serial"].lower() == serial.lower()]
+            nb_dev = existing.get(serial.lower())
+            nb_name = (nb_dev.name or "").lower() if nb_dev else None
+            if nb_name and rec_name != nb_name:
+                skipped_me_dup += 1
+                log("WARN", f"  duplicate serial in ME: {serial} — skipping "
+                            f"{rec['name']!r} (NetBox device is {nb_dev.name!r})")
+                continue
+            if nb_name is None:
+                # serial not in NetBox at all and ME has two records for it
+                skipped_me_dup += 1
+                log("WARN", f"  duplicate serial in ME: {serial} — no NetBox "
+                            f"device to disambiguate; skipping {rec['name']!r}")
+                continue
 
         # ── primary: match by serial ─────────────────────────────────────
         cur = None
@@ -238,6 +292,7 @@ def sync_assetexplorer():
     log("INFO", f"  ME assets processed:            {stats['fetched']}")
     log("INFO", f"  skipped (no/invalid product type): {stats['skipped_no_type']}")
     log("INFO", f"  skipped (no serial):            {stats['skipped_no_serial'] + skipped_bad_serial}")
+    log("INFO", f"  skipped (duplicate serial in ME): {skipped_me_dup}")
     log("INFO", f"  serial matches (existing devices): {tags_synced + matched_skipped - name_matched - suffix_matched}")
     log("INFO", f"  hardware-suffix matches (camera serials): {suffix_matched}")
     log("INFO", f"  name matches (serial missing/unmatched): {name_matched}")

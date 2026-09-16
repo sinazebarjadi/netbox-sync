@@ -442,6 +442,54 @@ def test_serial_less_ae_asset_matched_by_name_not_created(monkeypatch):
     assert ep.updated[0]["asset_tag"] == "41510140"
 
 
+# ── ME-internal duplicate serial handling ────────────────────────────────────
+
+def test_me_duplicate_serial_name_agreement_wins(monkeypatch):
+    """Two ME assets share a serial; the one whose name matches the NetBox
+    device is used, the other is skipped — no guessing."""
+    dev = FakeRecord(9, serial="784558765606", name="F1-W-AP", asset_tag=None,
+                     site=SimpleNamespace(name="Pardis"), custom_fields={})
+    ep = FakeEndpoint([dev])
+    _patch_helpers(monkeypatch, ep)
+    rec_match = _normalize(_asset(name="F1-W-AP", org_serial_number="784558765606",
+                                  asset_tag="44510300"))
+    rec_other = _normalize(_asset(name="Pardis-SW", org_serial_number="784558765606",
+                                  asset_tag="44550003"))
+    _patch_fetch(monkeypatch, [rec_match, rec_other])
+    ae_sync.sync_assetexplorer()
+    # the name-matching record synced the tag; the other was skipped
+    assert ep.updated and ep.updated[0]["asset_tag"] == "44510300"
+    assert not any(u.get("asset_tag") == "44550003" for u in ep.updated)
+
+
+def test_me_duplicate_serial_no_name_match_skips_both(monkeypatch, capsys):
+    """Two ME assets share a serial and neither name matches the NetBox device
+    -> both skipped, tag never written."""
+    dev = FakeRecord(9, serial="784558765606", name="F1-W-AP", asset_tag=None,
+                     site=SimpleNamespace(name="Pardis"), custom_fields={})
+    ep = FakeEndpoint([dev])
+    _patch_helpers(monkeypatch, ep)
+    rec_a = _normalize(_asset(name="Pardis-SW", org_serial_number="784558765606",
+                              asset_tag="44510300"))
+    rec_b = _normalize(_asset(name="784558765606", org_serial_number="784558765606",
+                              asset_tag="44550003"))
+    _patch_fetch(monkeypatch, [rec_a, rec_b])
+    ae_sync.sync_assetexplorer()
+    assert ep.update_calls == 0
+    assert "duplicate serial in ME" in capsys.readouterr().out
+
+
+def test_me_duplicate_serial_warns_in_log(monkeypatch, capsys):
+    """Duplicate ME serials produce a WARN log listing both records."""
+    ep = FakeEndpoint([])
+    _patch_helpers(monkeypatch, ep)
+    rec_a = _normalize(_asset(name="A", org_serial_number="DUP123", asset_tag="1"))
+    rec_b = _normalize(_asset(name="B", org_serial_number="DUP123", asset_tag="2"))
+    _patch_fetch(monkeypatch, [rec_a, rec_b])
+    ae_sync.sync_assetexplorer()
+    assert "duplicate serial in ME: dup123" in capsys.readouterr().out
+
+
 def test_serial_less_and_nameless_match_skips_cleanly(monkeypatch):
     """AE asset with no serial and no NetBox name match -> skipped, no create."""
     ep = FakeEndpoint([])
