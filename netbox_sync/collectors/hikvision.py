@@ -1,6 +1,7 @@
 """Hikvision NVRs: ISAPI-over-HTTP digest session, identity/channel/status
 parsers, probe and collection. Cameras attached to an NVR are returned as a
 list of dicts; the NVR itself is the only device this family models."""
+import re
 import time
 from xml.etree import ElementTree as ET
 
@@ -183,7 +184,7 @@ def probe_hikvision(ip, retries=2, retry_delay=3):
             return {
                 "ip":           ip,
                 "host":         f"{ip}:{HIKVISION_PORT}",
-                "serial":       info.get("serial"),
+                "serial":       _extract_nvr_serial(info.get("serial")),
                 "model":        info.get("model"),
                 "hostname":     _unique_hostname(info.get("name"), ip),
                 "reported_ip":  ip,
@@ -225,6 +226,27 @@ def _extract_camera_serial(raw_serial):
             # (truncated by the NVR). Reject only obviously invalid values.
             if candidate and len(candidate) >= 2 and not candidate.startswith("-"):
                 return candidate
+    return s
+
+
+def _extract_nvr_serial(raw_serial):
+    """Extract the actual NVR serial from the combined Hikvision string.
+
+    NVRs return a combined string like:
+      DS-96128NI-H24R3220240730CCRRFK2666191WCVLU  (43 chars) -> FK2666191
+      DS-7616NI-E2/8P1620170811AARR814462512WCVU   (41 chars) -> 814462512
+
+    The actual serial (printed on the unit, matching ManageEngine) is between
+    the CCRR/AARR marker and the final WCVU/WCVLU suffix.
+    """
+    if not raw_serial:
+        return raw_serial
+    s = str(raw_serial).strip()
+    # Find CCRR or AARR marker, then WCVU or WCVLU at the end
+    m = re.search(r'(?:CCRR|AARR)(.+?)(?:WCVU|WCVLU)$', s)
+    if m:
+        return m.group(1)
+    # Fallback: no markers found — return as-is
     return s
 
 
@@ -310,7 +332,8 @@ def hikvision_collect(ip):
         return {
             "summary": {
                 "name": info.get("name"), "model": info.get("model"),
-                "serial": info.get("serial"), "mac": info.get("mac"),
+                "serial": _extract_nvr_serial(info.get("serial")),
+                "mac": info.get("mac"),
                 "firmware": info.get("firmware"),
             },
             "cameras": cameras,
