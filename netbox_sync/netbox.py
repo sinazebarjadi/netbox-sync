@@ -233,13 +233,18 @@ def ensure_primary_ip(dev_id, ip, hostname=None, iface_name=None):
                 log("INFO", f"  primary IPv4 {ip} moved from device "
                             f"id={iface_dev} to camera id={dev_id} "
                             f"(camera replaced, serial is identity)")
-                # Clear the old assignment first, then assign to the new camera
+                # 1. Clear the old camera's primary_ip4 (NetBox rejects reassignment
+                #    while the IP is the old device's primary)
+                old_dev = api.dcim.devices.get(id=iface_dev)
+                if old_dev and getattr(old_dev, "primary_ip4", None):
+                    api.dcim.devices.update([{"id": iface_dev, "primary_ip4": None}])
+                # 2. Clear the IP's assignment to the old interface
                 api.ipam.ip_addresses.update([{
                     "id": ip_id,
                     "assigned_object_type": None,
                     "assigned_object_id": None,
                 }])
-                # Now assign to the new camera's interface
+                # 3. Assign to the new camera's interface
                 iface = None
                 if iface_name:
                     iface = api.dcim.interfaces.get(device_id=dev_id, name=iface_name)
