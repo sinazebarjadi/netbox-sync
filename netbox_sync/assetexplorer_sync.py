@@ -353,28 +353,43 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
     # Rule 2: Check if an inventory item with this serial already exists ANYWHERE
     # in NetBox (not just on this device). One physical item = one serial = one
     # inventory item across the entire inventory.
-    # But: if the serial already exists on the SAME device we're attaching to,
-    # that's fine — we'll update it in place below.
+    # 
+    # Logic:
+    #   - Serial on a DIFFERENT real device (not warehouse, not this device)
+    #     -> skip (main automation owns it there)
+    #   - Serial on this SAME device -> update in place
+    #   - Serial ONLY on warehouse containers -> MOVE it to the real device
+    #     (delete the warehouse copy, create on the device)
     cands = list(api.dcim.inventory_items.filter(serial=serial))
-    if cands:
-        # Check if any match is on a DIFFERENT real device (not warehouse, not this device)
-        for c in cands:
-            dev = getattr(c, "device", None)
-            dev_name = dev.name if dev else ""
-            dev_id = dev.id if dev else None
-            if dev_name and "Warehouse-Stock" not in dev_name and dev_id != parent.id:
-                # Found on a DIFFERENT real device — skip (main automation owns it)
-                log("DEBUG", f"  inventory item {serial} already exists on "
-                            f"{dev_name} (id={c.id}) — skipping ME import")
-                return "skipped"
-        # All matches are on warehouse containers or on this same device — proceed
-        if any(getattr(c, "device", None) and getattr(c.device, "id", None) == parent.id
-               for c in cands):
-            pass   # will be handled by the per-device check below
-        else:
-            log("DEBUG", f"  inventory item {serial} exists only in warehouse — "
-                        f"importing to real device")
-            cands = []   # proceed to create on the real device
+    warehouse_copies = []
+    same_device_copy = None
+    for c in cands:
+        dev = getattr(c, "device", None)
+        dev_name = dev.name if dev else ""
+        dev_id = dev.id if dev else None
+        if dev_id == parent.id:
+            same_device_copy = c
+        elif dev_name and "Warehouse-Stock" in dev_name:
+            warehouse_copies.append(c)
+        elif dev_name:
+            # On a DIFFERENT real device — skip (main automation owns it there)
+            log("DEBUG", f"  inventory item {serial} already exists on "
+                        f"{dev_name} (id={c.id}) — skipping ME import")
+            return "skipped"
+
+    if same_device_copy:
+        # Update in place below
+        pass
+    elif warehouse_copies:
+        # The item is being installed on a real device — remove warehouse copies
+        for wc in warehouse_copies:
+            try:
+                wc.delete()
+                log("INFO", f"  inventory item {serial} moved from "
+                            f"{getattr(wc.device, 'name', '?')} to {parent.name}")
+            except Exception as e:
+                log("WARN", f"  failed to delete warehouse copy {wc.id}: {e}")
+        cands = []   # will create fresh on the real device
     role_id = get_or_create_inventory_role(rec.get("component_role") or "Other")
     mfr_id = get_or_create_manufacturer(rec.get("manufacturer") or "Unknown")
 
@@ -407,8 +422,8 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
     if not payload["part_id"]:
         payload.pop("part_id", None)
 
-    if cands:
-        existing_item = cands[0]
+    if same_device_copy:
+        existing_item = same_device_copy
         # Idempotency: only update if something actually changed
         changed = False
         update_payload = {"id": existing_item.id}
