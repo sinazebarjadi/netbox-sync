@@ -18,6 +18,7 @@ from requests.exceptions import ChunkedEncodingError
 from netbox_sync.config import UNV_USER, UNV_PASS, UNV_PORT, log
 from netbox_sync.utils import is_port_open
 from netbox_sync.report import classify_error, record_probe_failure
+from netbox_sync.collectors.hikvision import _extract_camera_serial
 
 # ── session ──────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,10 @@ def unv_collect(ip):
             log("WARN", f"  unv {ip}: Channels/System/DeviceInfos failed: {exc}")
         for cam in cameras:
             detail = ipc.get(cam["channel"]) or {}
-            cam["serial"] = detail.get("serial")
+            # Normalize: extract the actual hardware serial from the combined
+            # string (e.g. DS-2CD2120F-I20170813AAWR811690176 -> 811690176)
+            raw_serial = detail.get("serial")
+            cam["serial"] = _extract_camera_serial(raw_serial) if raw_serial else None
             cam["firmware"] = detail.get("firmware")
             cam["model"] = cam["model"] or detail.get("model")
             if not cam["name"]:

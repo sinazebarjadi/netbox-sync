@@ -16,6 +16,7 @@ from requests.auth import HTTPDigestAuth
 from netbox_sync.config import DAHUA_USER, DAHUA_PASS, DAHUA_PORT, log
 from netbox_sync.utils import is_port_open
 from netbox_sync.report import classify_error, record_probe_failure
+from netbox_sync.collectors.hikvision import _extract_camera_serial
 
 # ── session ──────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,8 @@ def _parse_remote_devices(text):
             "name":         None,   # filled from ChannelTitle by the collector
             "ip":           e.get("Address"),
             "model":        model,
-            "serial":       e.get("SerialNo") or None,
+            # Normalize: extract the actual hardware serial from combined strings
+            "serial":       _extract_camera_serial(e.get("SerialNo")) if e.get("SerialNo") else None,
             "firmware":     e.get("Version") or None,
             "mac":          _norm_mac(e.get("Mac")),
             "online":       (e.get("Enable") or "").strip().lower() == "true",

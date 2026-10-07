@@ -65,7 +65,8 @@ def test_parse_remote_devices():
     assert [c["channel"] for c in cams] == [1, 2, 3]
     c1, c2, c3 = cams
     assert c1["ip"] == "192.168.252.25"
-    assert c1["serial"] == "DS-2CD1143G0-I20211208AAWRJ21084244"
+    # serial is normalized: extract actual hardware serial after AWR marker
+    assert c1["serial"] == "J21084244"
     assert c1["model"] == "DS-2CD1143G0-I"
     assert c1["firmware"] == "V5.7.1 build 211102"
     assert c1["online"] is True
