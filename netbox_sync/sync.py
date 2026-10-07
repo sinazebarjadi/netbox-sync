@@ -204,6 +204,9 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
             except Exception as e:
                 log("ERROR", f"  ensure device failed for {ip}: {e}")
                 record_processing_failure(f"{family} NVR", ip, classify_error(e))
+            # Mark cameras offline when the NVR is unreachable for consecutive
+            # runs — the camera is only "alive" if the NVR reports it.
+            _mark_nvr_cameras_offline_if_unreachable(api, ip, nvr_name, family)
             continue
 
         try:
@@ -339,6 +342,21 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
 
         log("INFO", f"  [OK] {family} NVR {ip} — {len(data['cameras'])} cameras synced")
     return live_ips
+
+
+def _mark_nvr_cameras_offline_if_unreachable(api, nvr_ip, nvr_name, family):
+    """When an NVR is unreachable (collect failed), mark its cameras offline.
+
+    A camera is only 'alive' if its NVR reports it. When the NVR is
+    unreachable for consecutive runs, the camera should be marked offline
+    rather than staying active forever on stale data."""
+    try:
+        for d in list(api.dcim.devices.filter(cf_cam_nvr=nvr_name,
+                                              cf_cam_enabled=True)):
+            mark_camera_offline(d.id, d.name)
+            log("INFO", f"  camera {d.name} marked offline (NVR {nvr_name} unreachable)")
+    except Exception as e:
+        log("ERROR", f"  failed to mark cameras offline for unreachable NVR {nvr_ip}: {e}")
 
 
 def run_sync():
