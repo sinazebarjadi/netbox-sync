@@ -233,7 +233,26 @@ def ensure_primary_ip(dev_id, ip, hostname=None, iface_name=None):
                 log("INFO", f"  primary IPv4 {ip} moved from device "
                             f"id={iface_dev} to camera id={dev_id} "
                             f"(camera replaced, serial is identity)")
-                # Fall through to the assignment logic below
+                # Clear the old assignment first, then assign to the new camera
+                api.ipam.ip_addresses.update([{
+                    "id": ip_id,
+                    "assigned_object_type": None,
+                    "assigned_object_id": None,
+                }])
+                # Now assign to the new camera's interface
+                iface = None
+                if iface_name:
+                    iface = api.dcim.interfaces.get(device_id=dev_id, name=iface_name)
+                    if iface is None:
+                        log("WARN", f"  carrier interface {iface_name} not found on "
+                                    f"device id={dev_id} — using synthetic mgmt")
+                if iface is None:
+                    iface = _get_or_create_mgmt_iface(api, dev_id)
+                api.ipam.ip_addresses.update([{
+                    "id": ip_id,
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": iface.id,
+                }])
             else:
                 log("WARN", f"  primary IPv4 {ip} is assigned to another device — "
                             f"leaving device id={dev_id} unchanged")
