@@ -222,9 +222,22 @@ def ensure_primary_ip(dev_id, ip, hostname=None, iface_name=None):
             iface_dev = getattr(d, "id", None) if d is not None \
                         else getattr(iface, "device_id", None)
         if iface_dev != dev_id:
-            log("WARN", f"  primary IPv4 {ip} is assigned to another device — "
-                        f"leaving device id={dev_id} unchanged")
-            return ip_id
+            # Cameras: identity is the serial, IP is a reassignable attribute.
+            # When a camera is replaced (same IP, new serial), move the IP to
+            # the new camera's interface. The old camera is no longer on the
+            # NVR, so it should not retain the IP.
+            target_dev = api.dcim.devices.get(id=dev_id)
+            is_camera = (target_dev and getattr(target_dev, "role", None) and
+                         getattr(target_dev.role, "name", "") == "Camera")
+            if is_camera:
+                log("INFO", f"  primary IPv4 {ip} moved from device "
+                            f"id={iface_dev} to camera id={dev_id} "
+                            f"(camera replaced, serial is identity)")
+                # Fall through to the assignment logic below
+            else:
+                log("WARN", f"  primary IPv4 {ip} is assigned to another device — "
+                            f"leaving device id={dev_id} unchanged")
+                return ip_id
     else:
         iface = None
         if iface_name:
