@@ -78,7 +78,9 @@ def main():
 
         log("INFO", f"  {ip} identified as {fam}: {probe.get('model')} / {probe.get('serial')}")
         try:
-            data = collect_fn(ip)
+            # Server collectors take host (IP:port), not just IP
+            collect_host = probe.get("host") if fam == "server" else ip
+            data = collect_fn(collect_host)
 
             if fam == "ftd":
                 # FTD path: the IP is the FMC; enumerate all managed FTDs
