@@ -102,6 +102,19 @@ def main():
             if fam in ("hikvision", "dahua", "unv"):
                 # NVR path: process cameras + HDDs
                 process_nvrs([probe], collect_fn, ensure_fn, fam, {}, {}, api)
+            elif fam == "san":
+                # SAN switch path: sync FC interfaces + inventory
+                from netbox_sync.collectors.brocade import sync_san_interfaces
+                ports = data.get("ports", [])
+                nameserver = data.get("nameserver", [])
+                inv = data.get("inventory", {})
+                try:
+                    sync_san_interfaces(dev_id, ports, nameserver)
+                    log("INFO", f"  [OK] SAN {ip} — {len(ports)} ports, {len(nameserver)} nameserver entries")
+                except Exception as e:
+                    log("ERROR", f"  SAN interface sync failed for {ip}: {e}")
+                sync_inventory(dev_id, inv)
+                log("INFO", f"  [OK] SAN {ip} — {len(inv)} inventory items synced")
             else:
                 inv = data.get("inventory", {})
                 sync_inventory(dev_id, inv)
