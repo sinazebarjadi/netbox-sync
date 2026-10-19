@@ -54,7 +54,17 @@ def sync_assetexplorer():
     for d in api.dcim.devices.filter():
         s = (d.serial or "").strip().lower()
         if s:
-            if s not in existing or not (existing[s].custom_fields or {}).get("ae_asset_id"):
+            # Prefer the device WITHOUT ae_asset_id (automation-created)
+            # over the one WITH ae_asset_id (ME-created). If the serial is
+            # already in the index and the existing device has ae_asset_id,
+            # replace it with this one (which might not have it).
+            if s not in existing:
+                existing[s] = d
+            elif not (existing[s].custom_fields or {}).get("ae_asset_id"):
+                # Existing device has no ae_asset_id (automation-created) — keep it
+                pass
+            else:
+                # Existing device has ae_asset_id (ME-created) — replace with this one
                 existing[s] = d
             sfx = _serial_suffix(s)
             if sfx:
