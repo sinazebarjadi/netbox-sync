@@ -201,6 +201,7 @@ def test_sync_inventory_single_fetch_and_no_per_item_get(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox",
                         lambda: _fake_api(inventory_items=ep))
     monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "_get_or_create_warehouse_device", lambda api: 99)
 
     filter_calls = []
     orig_filter = ep.filter
@@ -213,7 +214,7 @@ def test_sync_inventory_single_fetch_and_no_per_item_get(monkeypatch):
     ep.get = fail_get
 
     nbx.sync_inventory(7, {"A": _item("A"), "B": _item("B")})
-    assert len(filter_calls) == 1
+    assert len(filter_calls) == 2  # device items + warehouse items
 
 
 # ── ensure_server_device blank-serial adoption (no duplicates) ───────────────
@@ -487,6 +488,7 @@ def test_inventory_sync_is_bulk(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox",
                         lambda: _fake_api(inventory_items=ep))
     monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "_get_or_create_warehouse_device", lambda api: 99)
 
     nbx.sync_inventory(7, {"A": _item("A"), "B": _item("B"), "C": _item("C")})
     assert ep.update_calls == 1                 # 1 update (A) in one call

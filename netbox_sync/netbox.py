@@ -1336,8 +1336,18 @@ def sync_inventory(dev_id, new_inventory):
     # What remains are live single items whose serial is still reported
     live = {s: items[0] for s, items in by_serial.items() if items}
 
+    # Check warehouse for serials that are being reinstalled — MOVE them back
+    # instead of creating duplicates. One physical item = one serial = one
+    # NetBox record, no matter which device (or warehouse) it's attached to.
+    warehouse_id = _get_or_create_warehouse_device(api)
+    warehouse_items = {}
+    for item in api.dcim.inventory_items.filter(device_id=warehouse_id):
+        s = str(item.serial or "").strip()
+        if s:
+            warehouse_items[s] = item
+
     # Bulk write: one HTTP call per operation regardless of item count
-    updates, creates = [], []
+    updates, creates, restores = [], [], []
     for serial, item in new_inventory.items():
         mfr_id = get_or_create_manufacturer(item.get("manufacturer"))
         payload = {
@@ -1351,9 +1361,16 @@ def sync_inventory(dev_id, new_inventory):
         }
         if serial in live:
             updates.append({"id": live[serial].id, **payload})
+        elif serial in warehouse_items:
+            # Reinstall: move the warehouse copy back to this device
+            restores.append({"id": warehouse_items[serial].id, **payload})
+            log("INFO", f"  inventory item {serial} restored from "
+                        f"Warehouse-Stock-HQ to device id={dev_id}")
         else:
             creates.append(payload)
     if updates:
         api.dcim.inventory_items.update(updates)
+    if restores:
+        api.dcim.inventory_items.update(restores)
     if creates:
         api.dcim.inventory_items.create(creates)
