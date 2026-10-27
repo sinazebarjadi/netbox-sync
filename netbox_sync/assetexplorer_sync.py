@@ -145,12 +145,17 @@ def sync_assetexplorer():
         cur = None
         if not _invalid_serial(serial):
             cur = existing.get(serial.lower())
-            if cur is not None and cur.name.lower() != rec_name:
-                # Names differ — could be a rename (fine) OR a stale serial
-                # (dangerous: AE says this serial belongs to a different name).
-                # Detect stale: AE has ANOTHER asset whose name matches the
-                # NetBox device but whose serial differs -> the NetBox serial
-                # is outdated, don't trust this match.
+        if cur is not None and cur.name.lower() != rec_name:
+            # Names differ — could be a rename (fine) OR a stale serial
+            # (dangerous: AE says this serial belongs to a different name).
+            # Detect stale: AE has ANOTHER asset whose name matches the
+            # NetBox device but whose serial differs -> the NetBox serial
+            # is outdated, don't trust this match.
+            # But first: check if the names are actually the same device
+            # (case-insensitive match handles AE uppercase vs NetBox mixed case)
+            if cur.name.lower() == rec_name.lower():
+                pass  # same name, just different case — proceed with update
+            else:
                 nb_name = cur.name.lower()
                 ae_for_nb_name = by_ae_name.get(nb_name)
                 if (ae_for_nb_name is not None
