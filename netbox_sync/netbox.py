@@ -1265,6 +1265,33 @@ def _check_offline(ip, live_ips, dev_id, dev_name, mark_fn, label):
             f"(miss {misses}/{OFFLINE_THRESHOLD}) -- keeping active")
 
 # ── inventory sync (shared) ──────────────────────────────────────────────────
+_WAREHOUSE_DEVICE_CACHE = {}
+
+def _get_or_create_warehouse_device(api):
+    """Return the id of the single HQ warehouse container device
+    'Warehouse-Stock-HQ', creating it if missing. Mirrors the AssetExplorer
+    rule: Warehouse Stock exists ONLY for the HQ site — every removed or
+    unattached inventory item across the whole estate lands here, so a serial
+    exists at most once in NetBox and reinstalls reattach the same record."""
+    if "id" in _WAREHOUSE_DEVICE_CACHE:
+        return _WAREHOUSE_DEVICE_CACHE["id"]
+    site_id = get_or_create_site("HQ")
+    warehouse_name = "Warehouse-Stock-HQ"
+    mfr_id = get_or_create_manufacturer("Generic")
+    dtype_id = get_or_create_device_type("Warehouse Inventory", mfr_id)
+    role_id = get_or_create_role("Inventory")
+    cands = list(api.dcim.devices.filter(name=warehouse_name, site_id=site_id))
+    if cands:
+        dev_id = cands[0].id
+    else:
+        dev_id = api.dcim.devices.create({
+            "name": warehouse_name, "site": site_id,
+            "device_type": dtype_id, "role": role_id, "status": "inventory",
+            "comments": "Container for removed/spare inventory items",
+        }).id
+    _WAREHOUSE_DEVICE_CACHE["id"] = dev_id
+    return dev_id
+
 def sync_inventory(dev_id, new_inventory):
     api = get_netbox()
     # Single fetch — group existing items by serial
@@ -1280,12 +1307,31 @@ def sync_inventory(dev_id, new_inventory):
             for item in items: item.delete()
             by_serial[s] = []
 
-    # Delete items the device no longer reports
+    # Items the device no longer reports are MOVED to Warehouse-Stock-HQ
+    # instead of deleted: the physical item still exists (spare/warehouse), and
+    # keeping the serial means a later reinstall reattaches the SAME record
+    # instead of creating a duplicate. Idempotent: items already in the
+    # warehouse are never touched here (we only see items on THIS device), and
+    # re-running a scan that still doesn't report the serial is a no-op.
     new_serials = set(new_inventory.keys())
-    for s, items in by_serial.items():
-        if items and s not in new_serials:
-            for item in items: item.delete()
-            by_serial[s] = []
+    moved_serials = [s for s, items in by_serial.items()
+                     if items and s not in new_serials]
+    if moved_serials:
+        try:
+            warehouse_id = _get_or_create_warehouse_device(api)
+            api.dcim.inventory_items.update(
+                [{"id": by_serial[s][0].id, "device": warehouse_id}
+                 for s in moved_serials])
+            for s in moved_serials:
+                log("INFO", f"  inventory item {s} moved from device id={dev_id} "
+                            f"to Warehouse-Stock-HQ")
+                by_serial[s] = []
+        except Exception as e:
+            # Leave the items in by_serial: they won't match `live` (their
+            # serial isn't reported), so they simply stay on the device and
+            # the move is retried on the next run.
+            log("WARN", f"  failed to move {len(moved_serials)} inventory item(s) "
+                        f"to Warehouse-Stock-HQ: {e}")
 
     # What remains are live single items whose serial is still reported
     live = {s: items[0] for s, items in by_serial.items() if items}

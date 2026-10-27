@@ -98,6 +98,10 @@ class FakeEndpoint:
                 for k, v in p.items():
                     if k != "id":
                         setattr(rec, k, v)
+                # NetBox filters on the FK server-side; keep device_id in
+                # sync when device changes (as the create() path already does)
+                if "device" in p:
+                    rec.device_id = p["device"]
         return True
 
 
@@ -123,7 +127,9 @@ def _item(serial, name="Item"):
             "serial": serial, "description": "", "role": 4}
 
 
-def test_sync_inventory_deletes_stale_and_dupes_and_upserts(monkeypatch):
+def test_sync_inventory_moves_stale_to_warehouse_and_upserts(monkeypatch):
+    """Stale items are MOVED to Warehouse-Stock-HQ (not deleted); duplicates
+    of a reported serial are still deleted outright."""
     existing = [
         FakeRecord(1, serial="KEEP", device_id=7),
         FakeRecord(2, serial="STALE", device_id=7),
@@ -134,19 +140,59 @@ def test_sync_inventory_deletes_stale_and_dupes_and_upserts(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox",
                         lambda: _fake_api(inventory_items=ep))
     monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "_get_or_create_warehouse_device", lambda api: 99)
 
     nbx.sync_inventory(7, {"KEEP": _item("KEEP"),
                            "DUP": _item("DUP"),
                            "NEW": _item("NEW")})
 
-    # STALE removed; both DUP duplicates removed
-    assert set(ep.deleted_ids) == {2, 3, 4}
+    # Both DUP duplicates deleted; STALE NOT deleted — moved to warehouse id=99
+    assert set(ep.deleted_ids) == {3, 4}
+    stale = next(i for i in ep.items if i.id == 2)
+    assert stale.device == 99
     # KEEP updated in place, DUP + NEW created fresh
-    assert {u["id"] for u in ep.updated} == {1}
+    assert {u["id"] for u in ep.updated if u.get("device") != 99} == {1}
     assert {c["serial"] for c in ep.created} == {"DUP", "NEW"}
-    # Exactly one live item per serial at the end
-    live_serials = sorted(i.serial for i in ep._alive())
-    assert live_serials == ["DUP", "KEEP", "NEW"]
+    # Exactly one live item per serial on the device at the end; STALE lives
+    # in the warehouse now, still unique by serial
+    assert sorted(i.serial for i in ep._alive()) == ["DUP", "KEEP", "NEW", "STALE"]
+
+
+def test_sync_inventory_move_is_idempotent(monkeypatch):
+    """Re-running the same scan is a no-op for already-moved items: the
+    warehouse item is not on this device, so it's never re-moved/re-created."""
+    existing = [FakeRecord(1, serial="GONE", device_id=7)]
+    ep = FakeEndpoint(existing)
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(inventory_items=ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "_get_or_create_warehouse_device", lambda api: 99)
+
+    nbx.sync_inventory(7, {})          # first scan: item removed -> warehouse
+    assert ep.items[0].device == 99
+    assert ep.create_calls == 0 and not ep.deleted_ids
+
+    ep.updated.clear(); ep.update_calls = 0
+    nbx.sync_inventory(7, {})          # second scan: nothing on device -> no-op
+    assert ep.update_calls == 0 and ep.create_calls == 0 and not ep.deleted_ids
+
+
+def test_sync_inventory_warehouse_move_failure_keeps_item_on_device(monkeypatch):
+    """If the warehouse move API call fails, the item stays on the device and
+    the move is retried next run — nothing is deleted or duplicated."""
+    existing = [FakeRecord(1, serial="GONE", device_id=7)]
+    ep = FakeEndpoint(existing)
+    monkeypatch.setattr(nbx, "get_netbox",
+                        lambda: _fake_api(inventory_items=ep))
+    monkeypatch.setattr(nbx, "get_or_create_manufacturer", lambda name: 5)
+    monkeypatch.setattr(nbx, "_get_or_create_warehouse_device", lambda api: 99)
+    def boom(payload_list):
+        raise RuntimeError("NetBox 500")
+    ep.update = boom
+
+    nbx.sync_inventory(7, {})          # move fails -> item untouched
+    assert ep.items[0].device_id == 7
+    assert not ep.deleted_ids and ep.create_calls == 0
 
 
 def test_sync_inventory_single_fetch_and_no_per_item_get(monkeypatch):
