@@ -82,14 +82,39 @@ def _parse_show_switch(text):
 
 def _stack_members(switch_rows, inv_rows):
     """Join `show switch` members with their chassis serials from
-    `show inventory` ('Switch N' entries) -> [{member, role, mac, serial}].
-    Only members with a real chassis serial are kept."""
-    serial_by_member = {}
+    `show inventory` ('Switch N ...' entries) -> [{member, role, mac, serial}].
+    Only members with a real chassis serial are kept.
+
+    IOS/IOS-XE name the chassis row differently per platform:
+      - 2960X/3650/3850: "Switch 1"
+      - C9200/C9300/C9500: "Switch 1 Chassis" (and "Switch 1 Slot 1 Supervisor")
+    We match any 'Switch N <anything>' but only accept a serial when the row is
+    the chassis/supervisor (PID is the switch model itself) — NOT a power
+    supply, fan, or module whose serial would wrongly fill the member. Rows
+    named exactly "Switch N" (classic IOS) carry the chassis serial directly."""
+    # Rank rows: exact "Switch N" or "...Chassis" (best) > "...Supervisor" > nothing.
+    def _rank(rest):
+        r = rest.strip().lower()
+        if r == "" or "chassis" in r:
+            return 2          # exact "Switch N" or "Switch N Chassis"
+        if "supervisor" in r:
+            return 1          # "Switch N Slot X Supervisor" (same chassis serial)
+        return 0              # PSU / fan / module — not the chassis
+
+    best = {}   # member -> (rank, serial)
     for row in inv_rows:
-        m = re.match(r'^Switch\s+(\d+)$', (row.get("name") or "").strip(),
+        m = re.match(r'^Switch\s+(\d+)\b(.*)$', (row.get("name") or "").strip(),
                      re.IGNORECASE)
-        if m and row.get("sn"):
-            serial_by_member[int(m.group(1))] = row["sn"].strip()
+        if not m or not row.get("sn"):
+            continue
+        member = int(m.group(1))
+        rank = _rank(m.group(2))
+        if rank == 0:
+            continue
+        sn = row["sn"].strip()
+        if member not in best or rank > best[member][0]:
+            best[member] = (rank, sn)
+    serial_by_member = {m: sn for m, (_, sn) in best.items()}
     out = []
     for mem in switch_rows:
         serial = serial_by_member.get(mem["member"])
