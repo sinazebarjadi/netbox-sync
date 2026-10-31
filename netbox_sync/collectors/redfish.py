@@ -108,6 +108,65 @@ def probe_redfish(ip, retries=3, retry_delay=5):
     return None
 
 
+def _read_power_watts(rf, sys_odata):
+    """Live power draw (watts) for a server via Redfish. Tries, in order:
+      1. Chassis /Power -> PowerControl[0].PowerConsumedWatts (most iLOs)
+      2. Chassis /Power -> PowerControl[0].PowerMetrics.AverageConsumedWatts
+      3. System / PowerControl (some iLO5 expose it on the ComputerSystem)
+      4. Sum of PowerSupplies[].PowerOutputWatts / LastPowerOutputWatts
+    Returns an int watt value or None when nothing reports it."""
+    chassis_urls = []
+    try:
+        ch_col = rf.get("/redfish/v1/Chassis/")
+        chassis_urls = [m["@odata.id"] for m in ch_col.get("Members", [])]
+    except Exception:
+        pass
+
+    def _pc_watts(power):
+        for pc in (power.get("PowerControl") or []):
+            for key in ("PowerConsumedWatts",):
+                v = pc.get(key)
+                if isinstance(v, (int, float)) and v > 0:
+                    return int(round(v))
+            metrics = pc.get("PowerMetrics") or {}
+            for key in ("AverageConsumedWatts", "ConsumedWatts", "InstantaneousPower"):
+                v = metrics.get(key)
+                if isinstance(v, (int, float)) and v > 0:
+                    return int(round(v))
+        return None
+
+    for ch_url in chassis_urls:
+        try:
+            power = rf.get(f"{ch_url}/Power")
+            w = _pc_watts(power)
+            if w:
+                return w
+            # PSU sum fallback
+            total = 0
+            for psu in (power.get("PowerSupplies") or []):
+                for key in ("PowerOutputWatts", "LastPowerOutputWatts", "PowerInputWatts"):
+                    v = psu.get(key)
+                    if isinstance(v, (int, float)) and v > 0:
+                        total += v
+                        break
+            if total > 0:
+                return int(round(total))
+        except Exception:
+            continue
+
+    # System-level PowerControl (some implementations)
+    try:
+        sysdata = rf.get(sys_odata)
+        pc = sysdata.get("PowerControl")
+        if isinstance(pc, dict):
+            w = _pc_watts({"PowerControl": [pc]})
+            if w:
+                return w
+    except Exception:
+        pass
+    return None
+
+
 def rf_collect_inventory(host):
     rf = RedfishSession(host)
     rf.login()
@@ -515,6 +574,14 @@ def rf_collect_inventory(host):
             log("DEBUG", f"  HBA pseudo-serial collection skipped on {host}: {exc}")
 
         disk_total_gib = gib_from_bytes(disk_total_bytes) if disk_total_bytes else None
+        # Live power draw (best-effort; None when the BMC doesn't report it)
+        power_watts = None
+        try:
+            power_watts = _read_power_watts(rf, sys_odata)
+            if power_watts:
+                log("INFO", f"  redfish power: {power_watts}W")
+        except Exception as exc:
+            log("DEBUG", f"  redfish power read failed on {host}: {exc}")
         return {
             "summary": {
                 "model":          sys.get("Model"),
@@ -527,6 +594,7 @@ def rf_collect_inventory(host):
                 "cpu_threads":    cpu_threads,
                 "ram_gib":        ram_gib,
                 "disk_total_gib": disk_total_gib,
+                "power_watts":    power_watts,
             },
             "inventory": inventory,
         }

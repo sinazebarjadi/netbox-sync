@@ -998,6 +998,7 @@ CUSTOM_FIELDS = [
     ("redfish_cpu_threads",       "integer", "CPU threads"),
     ("redfish_ram_gib",           "integer", "RAM (GiB)"),
     ("redfish_disk_total_gib",    "integer", "Total disk (GiB)"),
+    ("redfish_power_watts",       "integer", "Power draw (W, live Redfish)"),
     # storage (MSA)
     ("storage_ip",                "text",    "Storage IP"),
     ("storage_enabled",           "boolean", "Storage enabled"),
@@ -1263,6 +1264,145 @@ def _check_offline(ip, live_ips, dev_id, dev_name, mark_fn, label):
     else:
         log("INFO", f"  {label} {dev_name} not seen this run "
             f"(miss {misses}/{OFFLINE_THRESHOLD}) -- keeping active")
+
+# ── power monitoring ─────────────────────────────────────────────────────────
+POWER_PORT_NAME = "PSU1"
+
+def _get_rack_feed(api, rack_id):
+    """The Power Feed attached to a rack (one feed per rack is the convention).
+    Returns the feed record or None."""
+    feeds = list(api.dcim.power_feeds.filter(rack_id=rack_id))
+    return feeds[0] if feeds else None
+
+
+def _get_or_create_power_port(api, dev_id, watts=None):
+    """Ensure a single Power Port on the device, with the draw set at creation.
+    Reuses an existing port when present. NetBox requires allocated_draw >= 1
+    and uses the iec-60320-c14 enum value for C14 inlets."""
+    pp = api.dcim.power_ports.get(device_id=dev_id, name=POWER_PORT_NAME)
+    if pp:
+        return pp
+    payload = {"device": dev_id, "name": POWER_PORT_NAME,
+               "type": "iec-60320-c14"}
+    if watts is not None:
+        payload["allocated_draw"] = max(1, int(watts))
+    return api.dcim.power_ports.create(payload)
+
+
+def _power_ports_in_rack(api, rack_id):
+    """All Power Ports whose device lives in this rack. Power Ports carry no
+    rack_id, so filter by the rack's devices."""
+    dev_ids = {getattr(d, "id", None) for d in api.dcim.devices.filter(rack_id=rack_id)}
+    dev_ids.discard(None)
+    out = []
+    for pp in api.dcim.power_ports.filter():
+        did = _power_port_device_id(pp)
+        if did in dev_ids:
+            out.append(pp)
+    return out
+
+
+def _power_port_device_id(port):
+    """Resolve a power port's device id whether `device` is a nested record
+    (real pynetbox), a plain int (create payload echo), or only device_id."""
+    d = getattr(port, "device", None)
+    if hasattr(d, "id"):
+        return d.id
+    if isinstance(d, int):
+        return d
+    return getattr(port, "device_id", None)
+
+
+def _cable_power_port_to_feed(api, power_port, feed):
+    """Cable the device's Power Port to the rack's Power Feed (b-side), unless
+    a cable already links them."""
+    # existing cable on this power port?
+    cables = list(api.dcim.cables.filter(termination_a_id=power_port.id))
+    for c in cables:
+        if (getattr(c, "termination_b_type", None) and
+                getattr(c, "termination_b_id", None) == feed.id):
+            return c  # already cabled
+    # create the cable: A = device power port, B = power feed
+    return api.dcim.cables.create({
+        "a_terminations": [{"object_type": "dcim.powerport", "object_id": power_port.id}],
+        "b_terminations": [{"object_type": "dcim.powerfeed", "object_id": feed.id}],
+        "status": "connected"})
+
+
+def sync_device_power(dev_id, watts):
+    """Record a device's power draw (watts) and cable it to its rack's feed.
+    Sets the Power Port's allocated_draw so NetBox feed utilization computes.
+    Idempotent: re-running with the same wattage is a no-op."""
+    api = get_netbox()
+    dev = api.dcim.devices.get(id=dev_id)
+    if dev is None:
+        return False
+    rack = getattr(dev, "rack", None)
+    rack_id = getattr(rack, "id", None) if rack else None
+    if not rack_id:
+        log("DEBUG", f"  power: device id={dev_id} has no rack — skipping")
+        return False
+    try:
+        pp = _get_or_create_power_port(api, dev_id, watts)
+        # update allocated_draw only when it changed
+        current = getattr(pp, "allocated_draw", None)
+        if current != int(watts):
+            api.dcim.power_ports.update([{"id": pp.id, "allocated_draw": int(watts)}])
+        feed = _get_rack_feed(api, rack_id)
+        if feed is not None:
+            try:
+                _cable_power_port_to_feed(api, pp, feed)
+            except Exception as e:
+                log("DEBUG", f"  power cable id={dev_id}->feed {feed.id}: {e}")
+        return True
+    except Exception as e:
+        log("WARN", f"  power sync failed for device id={dev_id}: {e}")
+        return False
+
+
+def _feed_capacity_watts(feed):
+    """Usable capacity of a feed in watts, honouring max_utilization headroom."""
+    v = getattr(feed, "voltage", None) or 0
+    a = getattr(feed, "amperage", None) or 0
+    max_util = getattr(feed, "max_utilization", None)
+    try:
+        cap = float(v) * float(a)
+        if max_util:
+            cap *= float(max_util) / 100.0
+        return cap
+    except Exception:
+        return 0.0
+
+
+def sync_rack_power(rack_id, per_device_watts=None):
+    """Recompute a rack's total draw from its devices' Power Ports and log the
+    feed utilization. per_device_watts (optional) is {dev_id: watts} for the
+    watts just collected this run; devices without an entry keep their stored
+    allocated_draw. Returns (total_watts, utilization_pct) or None."""
+    api = get_netbox()
+    feed = _get_rack_feed(api, rack_id)
+    if feed is None:
+        return None
+    total = 0
+    ports = _power_ports_in_rack(api, rack_id)
+    for pp in ports:
+        dev_id = _power_port_device_id(pp)
+        w = None
+        if per_device_watts and dev_id in per_device_watts:
+            w = per_device_watts[dev_id]
+        else:
+            w = getattr(pp, "allocated_draw", None)
+        if isinstance(w, (int, float)):
+            total += int(w)
+    cap = _feed_capacity_watts(feed)
+    util = round(100.0 * total / cap, 1) if cap > 0 else None
+    rack = api.dcim.racks.get(id=rack_id)
+    rack_name = getattr(rack, "name", rack_id)
+    util_txt = f"{util}%" if util is not None else "n/a"
+    log("INFO", f"  rack power: {rack_name} — {total}W drawn, "
+                f"{util_txt} of feed capacity ({int(cap)}W usable)")
+    return total, util
+
 
 # ── inventory sync (shared) ──────────────────────────────────────────────────
 _WAREHOUSE_DEVICE_CACHE = {}

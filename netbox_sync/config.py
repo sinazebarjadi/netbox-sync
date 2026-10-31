@@ -209,6 +209,55 @@ DEFAULT_MFR   = "HPE"
 DEFAULT_SITE  = os.getenv("DEFAULT_SITE_NAME", "")
 OFFLINE_THRESHOLD = int(os.getenv("OFFLINE_THRESHOLD", "2"))
 
+# ── power monitoring ─────────────────────────────────────────────────────────
+# Master switch for per-device power collection + per-rack utilization sync.
+POWER_SYNC_ENABLED = _env_bool("POWER_SYNC_ENABLED", True)
+# Feed is left with max_utilization% headroom when computing capacity.
+POWER_DEFAULT_FEED_MAX_UTIL = int(os.getenv("POWER_FEED_MAX_UTIL", "80"))
+# Typical draw (watts) by device model keyword -> watts. Longest keyword match
+# wins; fall through to POWER_DEFAULT_WATTS when nothing matches. Edit freely.
+_default_watts = {
+    "dl380 gen10": 600, "dl380 gen9": 500, "dl380": 500,
+    "dl360 gen10": 450, "dl360 gen9": 400, "dl360": 400,
+    "dl380p": 500, "dl380e": 450,
+    "c9500": 650, "c9300x": 450, "c9300": 350, "c9200l": 130, "c9200": 130,
+    "ws-c2960x-48": 90, "ws-c2960x-24": 70, "2960x": 90, "2960": 70,
+    "c3850": 350, "c4500x": 500, "3560": 100, "3750": 130, "sf500": 40,
+    "fortigate 1800f": 250, "fortigate 200g": 120, "fortigate 200f": 120,
+    "fortigate 100f": 60, "fortigate 60f": 25, "fg-1800f": 250, "fg-200g": 120,
+    "fg-100f": 60, "fg-60f": 25, "fortiweb": 150, "fwb-1000": 150,
+    "msa 2050": 300, "msa 2052": 300, "msa 2040": 300, "msa 2042": 300,
+    "msa 2060": 350, "msa": 300, "d2700": 250, "d3610": 300,
+    "sn3000b": 120, "sn3600b": 120, "brocade": 120, "san switch": 120,
+    "nvr": 60, "ds-96": 60, "ds-76": 40, "dhi-nvr": 60, "nvr608": 60,
+    "ccr1016": 60, "mikrotik": 40, "zd1200": 50, "zonedirector": 50,
+    "patch panel": 0, "blank": 0, "cable mgmt": 0, "cm021": 0,
+    "camera": 10, "access point": 20, "uap": 20, "r550": 15,
+}
+def _parse_power_watts(env_value):
+    """POWER_DEFAULT_WATTS_JSON overrides the built-in table (JSON object of
+    model-keyword -> watts). Keys are lowercased for matching."""
+    import json as _json
+    if env_value:
+        try:
+            return {str(k).lower(): int(v) for k, v in _json.loads(env_value).items()}
+        except Exception as e:
+            log("WARN", f"POWER_DEFAULT_WATTS_JSON invalid JSON ({e}) — using built-ins")
+    return dict(_default_watts)
+POWER_WATTS = _parse_power_watts(os.getenv("POWER_DEFAULT_WATTS_JSON"))
+POWER_DEFAULT_WATTS = int(os.getenv("POWER_DEFAULT_WATTS", "100"))
+
+def power_watts_for_model(model):
+    """Typical draw (watts) for a device model. Longest keyword match wins so
+    'c9300x' beats 'c9300'; falls back to POWER_DEFAULT_WATTS."""
+    m = (model or "").lower()
+    best, best_len = None, 0
+    for kw, watts in POWER_WATTS.items():
+        if kw in m and len(kw) > best_len:
+            best, best_len = watts, len(kw)
+    return best if best is not None else POWER_DEFAULT_WATTS
+
+
 # ── site keyword mapping ─────────────────────────────────────────────────────
 # Example mapping — replace with your own site keywords, or set SITE_KEYWORD_MAP
 # in your .env as "keyword1:Site1,keyword2:Site2"

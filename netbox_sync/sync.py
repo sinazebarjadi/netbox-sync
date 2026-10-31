@@ -40,7 +40,8 @@ from netbox_sync.config import (log, BMC_RANGES, STORAGE_RANGES, SAN_RANGES,
                                  CISCO_RANGES, FORTIGATE_RANGES, RUCKUS_RANGES,
                                  RUCKUS_HA_MAP, HIKVISION_RANGES, UNIFI_RANGES,
                                  DAHUA_RANGES, UNV_RANGES, FORTIWEB_RANGES,
-                                 FMC_RANGES)
+                                 FMC_RANGES, POWER_SYNC_ENABLED,
+                                 power_watts_for_model)
 from netbox_sync.report import (classify_error, clear as clear_scan_report,
                                 print_summary, record_processing_failure)
 from netbox_sync.ipam import (_prefix_from_ip, _iface_addr_with_prefixlen,
@@ -69,10 +70,11 @@ from netbox_sync.netbox import (get_netbox, ensure_server_device,
                                 mark_camera_offline, mark_unifi_offline,
                                 ensure_unifi_console, get_or_create_site,
                                 sync_wireless_lans, sweep_wireless_lans,
-                                ensure_custom_fields_if_set,
-                                ensure_custom_fields,
-                                _check_offline,
-                                sync_inventory)
+                                 ensure_custom_fields_if_set,
+                                 ensure_custom_fields,
+                                 _check_offline,
+                                 sync_inventory,
+                                 sync_device_power, sync_rack_power)
 from netbox_sync.scanner import scan_all
 from netbox_sync.utils import resolve_site
 
@@ -418,6 +420,8 @@ def run_sync():
                     "redfish_cpu_threads":    s.get("cpu_threads"),
                     "redfish_ram_gib":        s.get("ram_gib"),
                     "redfish_disk_total_gib": s.get("disk_total_gib"),
+                    **({"redfish_power_watts": int(s["power_watts"])}
+                       if s.get("power_watts") else {}),
                 },
             }
             if s.get("serial"): payload["serial"] = s["serial"]
@@ -1263,9 +1267,66 @@ def run_sync():
     except Exception as e:
         log("WARN", f"  custom-field visibility normalization failed: {e}")
 
+    # ── Power utilization: per-device draw + per-rack feed totals ─────────────
+    try:
+        _power_sync_pass()
+    except Exception as e:
+        log("ERROR", f"  power sync pass failed: {e}")
+
     log("INFO", "Unified sync complete")
     log("INFO", "=" * 60)
     print_summary(found)
+
+
+def _power_sync_pass():
+    """Assign a power draw (watts) to every racked device, cable its Power Port
+    to the rack's feed, then recompute each rack's feed utilization.
+
+    Draw source per device: live Redfish reading when the server collector
+    captured one this run (stored in cf via the summary), else the configurable
+    model default. Racks without a Power Feed are skipped. No-op when
+    POWER_SYNC_ENABLED is False."""
+    if not POWER_SYNC_ENABLED:
+        log("INFO", "  power sync disabled — skipping")
+        return
+    api = get_netbox()
+    log("INFO", "  power sync: computing per-rack utilization")
+
+    # Racks that have a feed; only these can report utilization.
+    racks_with_feed = {}
+    for feed in api.dcim.power_feeds.all():
+        rack_id = getattr(feed, "rack_id", None)
+        if rack_id is None:
+            r = getattr(feed, "rack", None)
+            rack_id = getattr(r, "id", None) if r else None
+        if rack_id:
+            racks_with_feed[rack_id] = getattr(feed, "name", str(rack_id))
+    if not racks_with_feed:
+        log("INFO", "  power sync: no racks have a power feed — nothing to do")
+        return
+
+    # All racked devices in those racks.
+    watts_by_rack = {}
+    updated = 0
+    for rack_id in racks_with_feed:
+        watts_by_rack[rack_id] = {}
+        for dev in api.dcim.devices.filter(rack_id=rack_id):
+            dt = getattr(dev, "device_type", None)
+            model = getattr(dt, "model", None) if dt else None
+            cf = getattr(dev, "custom_fields", None) or {}
+            # live Redfish watts when present (this run), else model default
+            watts = cf.get("redfish_power_watts") or power_watts_for_model(model)
+            # Passive gear (patch panels, cable managers, blanks) draws nothing
+            # and NetBox rejects allocated_draw < 1 — skip them entirely.
+            if not watts or int(watts) < 1:
+                continue
+            if sync_device_power(dev.id, watts):
+                updated += 1
+                watts_by_rack[rack_id][dev.id] = watts
+    log("INFO", f"  power sync: updated {updated} racked device power ports")
+
+    for rack_id in racks_with_feed:
+        sync_rack_power(rack_id, per_device_watts=watts_by_rack.get(rack_id))
 
 
 def _offline_sweep(api, enabled, cf_field, ip_field, live_ips, mark_fn, label,
