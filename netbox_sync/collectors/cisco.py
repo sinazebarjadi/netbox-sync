@@ -40,6 +40,31 @@ def _parse_show_version(text):
             out["serial"] = m.group(1)
     return out
 
+def _parse_show_version_member_serials(text):
+    """Parse per-member chassis serials from `show version` on classic IOS
+    stacks (2960X etc.), where each member has a block like:
+
+        Switch 02
+        ... (hardware lines) ...
+        System serial number            : FCW2050B6WM
+
+    -> {member_number: serial}. The first block (no 'Switch N' header) is
+    member 1. On IOS-XE this returns nothing useful (serials come from
+    `show inventory` there) — callers use this only as a fallback."""
+    serials = {}
+    current = 1            # default block = member 1
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r'^Switch\s+0*(\d+)\s*$', s, re.IGNORECASE)
+        if m:
+            current = int(m.group(1))
+            continue
+        m = re.match(r'^System serial number\s*:\s*(\S+)', s, re.IGNORECASE)
+        if m and current not in serials:
+            serials[current] = m.group(1)
+    return serials
+
+
 def _parse_show_inventory(text):
     """Parse `show inventory` NAME/DESCR + PID/VID/SN line pairs."""
     rows = []
@@ -64,26 +89,35 @@ def _parse_show_inventory(text):
 def _parse_show_switch(text):
     """Parse `show switch` member table -> [{member, role, mac, state}].
     Rows look like: '*1       Active   d009.c86a.fc80     1      V03     Ready'
-    or ' 2       Standby  8c84.4245.f800     1      V03     Ready'."""
+    or ' 2       Standby  8c84.4245.f800     1      V03     Ready'.
+    Classic IOS (2960X) uses Master/Member instead of Active/Standby; the
+    Master is the stack's primary. Normalise Master->Active, Member->Standby
+    so downstream logic (active/standby) works for both dialects."""
     members = []
     for line in text.splitlines():
         m = re.match(
-            r'^\s*\*?\s*(\d+)\s+(Active|Standby|Member)\s+([0-9a-f.]{14})\s+'
+            r'^\s*\*?\s*(\d+)\s+(Active|Standby|Member|Master)\s+([0-9a-f.]{14})\s+'
             r'(\d+)\s+(\S+)\s+(\S+)', line, re.IGNORECASE)
         if m:
+            role = m.group(2).capitalize()
+            if role == "Master":
+                role = "Active"
+            elif role == "Member":
+                role = "Standby"
             members.append({
                 "member": int(m.group(1)),
-                "role":   m.group(2).capitalize(),   # Active / Standby / Member
+                "role":   role,   # Active / Standby
                 "mac":    m.group(3),
                 "state":  m.group(6),
             })
     return members
 
 
-def _stack_members(switch_rows, inv_rows):
-    """Join `show switch` members with their chassis serials from
-    `show inventory` ('Switch N ...' entries) -> [{member, role, mac, serial}].
-    Only members with a real chassis serial are kept.
+def _stack_members(switch_rows, inv_rows, ver_serials=None):
+    """Join `show switch` members with their chassis serials -> [{member, role,
+    mac, serial}]. Only members with a real chassis serial are kept. Serials
+    come from `show inventory` ('Switch N ...' rows); ver_serials (from
+    `show version`) is the fallback for classic IOS that lacks chassis rows.
 
     IOS/IOS-XE name the chassis row differently per platform:
       - 2960X/3650/3850: "Switch 1"
@@ -115,6 +149,12 @@ def _stack_members(switch_rows, inv_rows):
         if member not in best or rank > best[member][0]:
             best[member] = (rank, sn)
     serial_by_member = {m: sn for m, (_, sn) in best.items()}
+    # Fallback: classic IOS (2960X) has no chassis rows in `show inventory`
+    # (only the stacking module) — chassis serials live in `show version`'s
+    # per-member 'System serial number' blocks instead.
+    if ver_serials:
+        for member, sn in ver_serials.items():
+            serial_by_member.setdefault(member, sn)
     out = []
     for mem in switch_rows:
         serial = serial_by_member.get(mem["member"])
@@ -470,7 +510,9 @@ def cisco_collect_inventory(ip):
     sess = CiscoSwitchSession(ip)
     sess.login()
     try:
-        ver = _parse_show_version(sess.run("show version"))
+        ver_text = sess.run("show version")
+        ver = _parse_show_version(ver_text)
+        ver_serials = _parse_show_version_member_serials(ver_text)
         inv_rows = _parse_show_inventory(sess.run("show inventory"))
         ports = _parse_interfaces_status(sess.run("show interfaces status"))
         log("INFO", f"  cisco show: {len(inv_rows)} inventory rows, {len(ports)} ports")
@@ -525,7 +567,7 @@ def cisco_collect_inventory(ip):
         # stack membership (single-member stacks -> a 1-entry list)
         try:
             switch_rows = _parse_show_switch(sess.run("show switch"))
-            stack = _stack_members(switch_rows, inv_rows)
+            stack = _stack_members(switch_rows, inv_rows, ver_serials)
             if len(stack) > 1:
                 log("INFO", f"  stack: {len(stack)} members "
                             f"({', '.join(m['role'] for m in stack)})")
