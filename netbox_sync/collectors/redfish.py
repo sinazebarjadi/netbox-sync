@@ -16,7 +16,13 @@ from netbox_sync.report import classify_error, record_probe_failure
 
 class RedfishSession:
     def __init__(self, host):
-        self.base = f"https://{host}"
+        # iLOs in this environment listen on REDFISH_PORT (default 443), NOT
+        # necessarily 443 — honour the configured port when building the base
+        # URL. host may be a bare IP or already carry :port.
+        if ":" in host:
+            self.base = f"https://{host}"
+        else:
+            self.base = f"https://{host}:{REDFISH_PORT}"
         self.s    = requests.Session()
         self.s.headers.update({"OData-Version": "4.0"})
         self.token = None
@@ -137,7 +143,8 @@ def _read_power_watts(rf, sys_odata):
 
     for ch_url in chassis_urls:
         try:
-            power = rf.get(f"{ch_url}/Power")
+            # ch_url may carry a trailing slash; strip it before appending
+            power = rf.get(f"{ch_url.rstrip('/')}/Power")
             w = _pc_watts(power)
             if w:
                 return w
