@@ -55,6 +55,10 @@ class _FakeSess:
     def __init__(self, out): self._out = out
     def run(self, cmd): return self._out
 
+class _FakeSessMulti:
+    def __init__(self, by_cmd): self._by = by_cmd
+    def run(self, cmd): return self._by.get(cmd, "")
+
 
 def test_cisco_power_classic_ios():
     out = "System Power Total (AC) 70 Watts\nSystem Power Used (AC)  33 Watts\n"
@@ -65,6 +69,34 @@ def test_cisco_power_iosxe_capacity_only_returns_none():
     out = ("Power  Model No  Type  Capacity  Status\n"
            "PS0    C9K-PWR-650WAC-R  AC  650 W  ok  good\n")
     assert pw.cisco_power_watts(_FakeSess(out)) is None
+
+
+_C9200L_POWER_DETAIL = """SW  PID                 Serial#     Status           Sys Pwr  PoE Pwr  Watts
+--  ------------------  ----------  ---------------  -------  -------  -----
+1A  PWR-C5-1KWAC        ART2648D0JR  OK              Good     Good     1000
+
+                           shutdown  Power                                  Out of  In
+Mod  Model No              Priority  State     Budget  Instantaneous  Peak  Reset   Reset
+---  --------------------  --------  --------  ------  -------------  ----  ------  -----
+1    C9200L-48P-4X         0         accepted  230     40             50    230     0
+
+Power Summary                       Maximum
+ (in Watts)    Allocated  Consumed  Available
+-------------  ---------  --------  ---------
+System Power   230        40        520
+POE Power      477        87        1480
+-------------  ---------  --------  ---------
+Total          707        127       2000
+"""
+
+def test_cisco_power_c9200l_power_detail():
+    w = pw._parse_show_power_detail_c9kl(_C9200L_POWER_DETAIL)
+    assert w == 127   # System 40 + POE 87
+
+def test_cisco_power_full_dispatch_c9200l():
+    sess = _FakeSessMulti({"show power": "no match here",
+                           "show power detail": _C9200L_POWER_DETAIL})
+    assert pw.cisco_power_watts(sess) == 127
 
 
 def test_cisco_power_multiple_switches_sum():

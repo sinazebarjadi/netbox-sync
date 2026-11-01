@@ -2390,12 +2390,17 @@ def test_ensure_custom_fields_creates_missing(monkeypatch):
     nbx.ensure_custom_fields()
 
     created_names = [p["name"] for p in ep.created]
-    assert len(created_names) == len(nbx.CUSTOM_FIELDS) - 1   # bmc_ip existed
+    # Device fields: all except the pre-existing bmc_ip.
+    device_fields_created = [n for n in created_names if n != "amps_draw"]
+    assert len(device_fields_created) == len(nbx.CUSTOM_FIELDS) - 1
+    # Plus the rack field.
+    assert "amps_draw" in created_names
     assert "bmc_ip" not in created_names
     for p in ep.created:
-        assert p["object_types"] == ["dcim.device"]
+        expected_type = ["dcim.rack"] if p["name"] == "amps_draw" else ["dcim.device"]
+        assert p["object_types"] == expected_type
         assert p["ui_visible"] == "if-set"
-        assert p["type"] in ("text", "integer", "boolean")
+        assert p["type"] in ("text", "integer", "boolean", "decimal")
     # visibility normalization still ran on the pre-existing field
     assert {"id": 1, "ui_visible": "if-set"} in ep.updated
 
