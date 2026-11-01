@@ -139,12 +139,14 @@ def test_sync_rack_power_aggregation(monkeypatch):
     api = _power_api()
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
     nbx.sync_device_power(7, 500)
-    # sanity: the port must be discoverable in the rack
     assert len(nbx._power_ports_in_rack(api, 1)) == 1
-    # 220V * 25A * 100% = 5500W; 500W -> ~9.1%
-    total, util = nbx.sync_rack_power(1, per_device_watts={7: 500})
-    assert total == 500
-    assert util == pytest.approx(9.1, abs=0.05)
+    # 220V * 25A * 100% = 5500W; 500W -> ~9.1%; amps = 500/220 ≈ 2.27
+    res = nbx.sync_rack_power(1, per_device_watts={7: 500})
+    assert res["watts"] == 500
+    assert res["utilization_pct"] == pytest.approx(9.1, abs=0.05)
+    assert res["amps"] == pytest.approx(2.27, abs=0.01)
+    assert res["measured_count"] == 1
+    assert res["device_count"] == 1
 
 
 def test_sync_rack_power_no_feed_returns_none(monkeypatch):
@@ -152,3 +154,18 @@ def test_sync_rack_power_no_feed_returns_none(monkeypatch):
                     power_feeds=FakeEndpoint([]))
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
     assert nbx.sync_rack_power(9) is None
+
+
+def test_watts_to_amps_single_phase():
+    assert nbx.watts_to_amps(220, 220, "single-phase") == 1.0
+    assert nbx.watts_to_amps(5602, 220, "single-phase") == round(5602/220, 2)
+
+
+def test_watts_to_amps_three_phase():
+    # 5602 @ 400V 3-phase -> 5602/(400*1.732)
+    assert nbx.watts_to_amps(5602, 400, "three-phase") == round(5602/(400*1.732), 2)
+
+
+def test_watts_to_amps_no_voltage():
+    assert nbx.watts_to_amps(500, 0, "single-phase") == 0.0
+    assert nbx.watts_to_amps(500, None, "single-phase") == 0.0

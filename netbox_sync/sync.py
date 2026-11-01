@@ -1308,14 +1308,21 @@ def _power_sync_pass():
     # All racked devices in those racks.
     watts_by_rack = {}
     updated = 0
+    live = default = 0
     for rack_id in racks_with_feed:
         watts_by_rack[rack_id] = {}
         for dev in api.dcim.devices.filter(rack_id=rack_id):
             dt = getattr(dev, "device_type", None)
             model = getattr(dt, "model", None) if dt else None
             cf = getattr(dev, "custom_fields", None) or {}
-            # live Redfish watts when present (this run), else model default
-            watts = cf.get("redfish_power_watts") or power_watts_for_model(model)
+            # Live Redfish reading (written this run by the server collect) is
+            # preferred; otherwise fall back to the configurable model default.
+            if cf.get("redfish_power_watts"):
+                watts = int(cf["redfish_power_watts"])
+                live += 1
+            else:
+                watts = power_watts_for_model(model)
+                default += 1
             # Passive gear (patch panels, cable managers, blanks) draws nothing
             # and NetBox rejects allocated_draw < 1 — skip them entirely.
             if not watts or int(watts) < 1:
@@ -1323,7 +1330,8 @@ def _power_sync_pass():
             if sync_device_power(dev.id, watts):
                 updated += 1
                 watts_by_rack[rack_id][dev.id] = watts
-    log("INFO", f"  power sync: updated {updated} racked device power ports")
+    log("INFO", f"  power sync: updated {updated} racked device power ports "
+                f"({live} live-measured, {default} model-default)")
 
     for rack_id in racks_with_feed:
         sync_rack_power(rack_id, per_device_watts=watts_by_rack.get(rack_id))

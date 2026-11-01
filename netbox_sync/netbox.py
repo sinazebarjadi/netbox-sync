@@ -1360,48 +1360,110 @@ def sync_device_power(dev_id, watts):
         return False
 
 
-def _feed_capacity_watts(feed):
-    """Usable capacity of a feed in watts, honouring max_utilization headroom."""
-    v = getattr(feed, "voltage", None) or 0
-    a = getattr(feed, "amperage", None) or 0
+THREE_PHASE_SQRT3 = 1.732
+
+
+def _feed_electrical(feed):
+    """(voltage, amperage, phase, max_util) from a feed record, normalised."""
+    def _val(x, default=None):
+        if isinstance(x, dict):
+            return x.get("value", default)
+        return x if x is not None else default
+    voltage = _val(getattr(feed, "voltage", None), 0)
+    amperage = _val(getattr(feed, "amperage", None), 0)
+    phase = _val(getattr(feed, "phase", None), "single-phase") or "single-phase"
     max_util = getattr(feed, "max_utilization", None)
     try:
-        cap = float(v) * float(a)
+        return float(voltage or 0), float(amperage or 0), str(phase), max_util
+    except Exception:
+        return 0.0, 0.0, str(phase), max_util
+
+
+def watts_to_amps(watts, voltage, phase="single-phase"):
+    """Convert watts to amperes. Single-phase: A = W / V. Three-phase:
+    A = W / (V * sqrt(3)). Returns 0 when voltage is unknown."""
+    w = float(watts or 0)
+    v = float(voltage or 0)
+    if v <= 0:
+        return 0.0
+    if str(phase).lower().startswith("three"):
+        return round(w / (v * THREE_PHASE_SQRT3), 2)
+    return round(w / v, 2)
+
+
+def _feed_capacity_watts(feed):
+    """Usable capacity of a feed in watts, honouring max_utilization headroom."""
+    v, a, _, max_util = _feed_electrical(feed)
+    cap = v * a
+    try:
         if max_util:
             cap *= float(max_util) / 100.0
         return cap
     except Exception:
-        return 0.0
+        return cap
+
+
+def _feed_capacity_amps(feed):
+    """Usable capacity of a feed in amperes (= rated amps * max_util headroom)."""
+    _, a, _, max_util = _feed_electrical(feed)
+    try:
+        return round(a * (float(max_util) / 100.0 if max_util else 1.0), 2)
+    except Exception:
+        return round(a, 2)
 
 
 def sync_rack_power(rack_id, per_device_watts=None):
-    """Recompute a rack's total draw from its devices' Power Ports and log the
-    feed utilization. per_device_watts (optional) is {dev_id: watts} for the
-    watts just collected this run; devices without an entry keep their stored
-    allocated_draw. Returns (total_watts, utilization_pct) or None."""
+    """Recompute a rack's total draw (watts AND amperes) from its devices'
+    Power Ports, and the feed utilization %. per_device_watts (optional) is
+    {dev_id: watts} for the watts just collected this run; devices without an
+    entry keep their stored allocated_draw. Writes the result to the feed's
+    description so the numbers are readable in the NetBox UI. Returns
+    {watts, amps, utilization_pct} or None."""
     api = get_netbox()
     feed = _get_rack_feed(api, rack_id)
     if feed is None:
         return None
     total = 0
+    measured = 0
     ports = _power_ports_in_rack(api, rack_id)
     for pp in ports:
         dev_id = _power_port_device_id(pp)
         w = None
         if per_device_watts and dev_id in per_device_watts:
             w = per_device_watts[dev_id]
+            measured += 1
         else:
             w = getattr(pp, "allocated_draw", None)
         if isinstance(w, (int, float)):
             total += int(w)
-    cap = _feed_capacity_watts(feed)
-    util = round(100.0 * total / cap, 1) if cap > 0 else None
+    cap_w = _feed_capacity_watts(feed)
+    voltage, rated_amps, phase, max_util = _feed_electrical(feed)
+    total_amps = watts_to_amps(total, voltage, phase)
+    cap_amps = _feed_capacity_amps(feed)
+    util = round(100.0 * total / cap_w, 1) if cap_w > 0 else None
+    util_amps = round(100.0 * total_amps / cap_amps, 1) if cap_amps > 0 else None
     rack = api.dcim.racks.get(id=rack_id)
     rack_name = getattr(rack, "name", rack_id)
     util_txt = f"{util}%" if util is not None else "n/a"
-    log("INFO", f"  rack power: {rack_name} — {total}W drawn, "
-                f"{util_txt} of feed capacity ({int(cap)}W usable)")
-    return total, util
+    log("INFO", f"  rack power: {rack_name} — {total}W / {total_amps}A drawn "
+                f"({measured}/{len(ports)} measured), utilization {util_txt} "
+                f"of usable capacity ({int(cap_w)}W / {cap_amps}A, "
+                f"rated {int(voltage)}V×{rated_amps}A {phase})")
+    # Write a readable summary onto the feed so it shows in the NetBox UI.
+    summary = (f"{rack_name}: {total}W / {total_amps}A drawn, "
+               f"utilization {util_txt} of usable "
+               f"({int(cap_w)}W/{cap_amps}A). "
+               f"Feed: {int(voltage)}V {phase}, rated {rated_amps}A, "
+               f"headroom {max_util}%. Updated by netbox-sync.")
+    try:
+        if getattr(feed, "description", None) != summary:
+            api.dcim.power_feeds.update([{"id": feed.id, "description": summary}])
+    except Exception as e:
+        log("DEBUG", f"  power feed description update failed for {rack_name}: {e}")
+    return {"watts": total, "amps": total_amps, "utilization_pct": util,
+            "utilization_amps_pct": util_amps, "capacity_watts": cap_w,
+            "capacity_amps": cap_amps, "measured_count": measured,
+            "device_count": len(ports)}
 
 
 # ── inventory sync (shared) ──────────────────────────────────────────────────
