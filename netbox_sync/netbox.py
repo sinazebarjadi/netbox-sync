@@ -1091,6 +1091,13 @@ CUSTOM_FIELDS = [
     ("ae_location",               "text",    "Location (AssetExplorer)"),
 ]
 
+# Rack-scoped custom fields (object_types=["dcim.rack"]) — separate from the
+# device fields above. amps_draw is the rack's measured total amperes, written
+# nightly by the power pass and sortable in the Racks list.
+RACK_CUSTOM_FIELDS = [
+    ("amps_draw",                 "decimal", "Power draw (A)"),
+]
+
 
 def ensure_custom_fields():
     """Create every missing custom field from CUSTOM_FIELDS (dcim.device,
@@ -1109,6 +1116,15 @@ def ensure_custom_fields():
             "name": name, "label": label, "type": typ,
             "object_types": ["dcim.device"], "ui_visible": "if-set",
             "description": "netbox-sync: managed field"})
+        created += 1
+    # Rack-scoped fields (amps_draw) live on dcim.rack, not dcim.device.
+    for name, typ, label in RACK_CUSTOM_FIELDS:
+        if name in existing:
+            continue
+        api.extras.custom_fields.create({
+            "name": name, "label": label, "type": typ,
+            "object_types": ["dcim.rack"], "ui_visible": "if-set",
+            "description": "netbox-sync: rack power draw in amperes (measured)"})
         created += 1
     if created:
         log("INFO", f"  custom fields: created {created} missing field(s)")
@@ -1527,6 +1543,15 @@ def sync_rack_power(rack_id, per_device_watts=None):
             api.dcim.power_feeds.update([{"id": feed.id, "description": summary}])
     except Exception as e:
         log("DEBUG", f"  power feed description update failed for {rack_name}: {e}")
+    # Store the rack's total amperes on the rack itself (sortable in the racks
+    # list) via the dcim.rack 'amps_draw' custom field.
+    try:
+        cur = getattr(rack, "custom_fields", None) or {}
+        if cur.get("amps_draw") != total_amps:
+            api.dcim.racks.update([{"id": rack_id,
+                                    "custom_fields": {**cur, "amps_draw": total_amps}}])
+    except Exception as e:
+        log("DEBUG", f"  rack amps_draw update failed for {rack_name}: {e}")
     return {"watts": total, "amps": total_amps, "utilization_pct": util,
             "utilization_amps_pct": util_amps, "capacity_watts": cap_w,
             "capacity_amps": cap_amps, "measured_count": measured,
