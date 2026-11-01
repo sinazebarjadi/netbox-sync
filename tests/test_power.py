@@ -98,13 +98,21 @@ def _power_api():
     rack = FakeRecord(1, name="R16")
     feed = FakeRecord(5, rack_id=1, rack=rack, voltage=220, amperage=25, max_utilization=100)
     # pynetbox exposes both dev.rack (nested) and a rack_id convenience field
-    dev = FakeRecord(7, rack=rack, rack_id=1)
+    dev = FakeRecord(7, rack=rack, rack_id=1, site=FakeRecord(1, name="HQ"), site_id=1)
     return _fake_api(
         racks=FakeEndpoint([rack]),
         power_feeds=FakeEndpoint([feed]),
         power_ports=FakeEndpoint([]),
         cables=FakeEndpoint([]),
         devices=FakeEndpoint([dev]),
+        power_outlets=FakeEndpoint([]),
+        # PDU/get-or-create dependencies
+        manufacturers=FakeEndpoint([FakeRecord(23, name="Generic")]),
+        device_roles=FakeEndpoint([FakeRecord(17, name="PDU", slug="pdu")]),
+        device_types=FakeEndpoint([]),
+        device_type_roles=FakeEndpoint([]),
+        device_types_models=FakeEndpoint([]),
+        sites=FakeEndpoint([FakeRecord(1, name="HQ", slug="hq")]),
     )
 
 
@@ -113,17 +121,26 @@ def test_sync_device_power_creates_port_and_cable(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
     ok = nbx.sync_device_power(7, 500)
     assert ok is True
-    assert len(api.dcim.power_ports.created) == 1
-    assert api.dcim.power_ports.created[0]["allocated_draw"] == 500
-    assert len(api.dcim.cables.created) == 1
+    # device PSU port with the draw, plus the PDU inlet
+    device_ports = [p for p in api.dcim.power_ports.created if p.get("allocated_draw")]
+    assert len(device_ports) == 1
+    assert device_ports[0]["allocated_draw"] == 500
+    # cabling: feed -> PDU inlet, and device PSU -> PDU outlet
+    assert len(api.dcim.cables.created) >= 1
+    pdb = [d for d in api.dcim.devices.created if d.get("role")]
+    assert any("PDU-" in (d.get("name") or "") for d in pdb)
 
 
 def test_sync_device_power_idempotent(monkeypatch):
     api = _power_api()
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
     assert nbx.sync_device_power(7, 500) is True
-    assert nbx.sync_device_power(7, 500) is True   # same watts -> no port update
-    assert len(api.dcim.power_ports.created) == 1  # no duplicate port
+    def device_psu_ports():
+        return [p for p in api.dcim.power_ports.items
+                if getattr(p, "allocated_draw", None)]
+    assert len(device_psu_ports()) == 1
+    assert nbx.sync_device_power(7, 500) is True   # same watts -> no new port
+    assert len(device_psu_ports()) == 1  # still exactly one device PSU port
 
 
 def test_sync_device_power_no_rack_skips(monkeypatch):

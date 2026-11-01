@@ -1290,9 +1290,15 @@ def _get_or_create_power_port(api, dev_id, watts=None):
 
 
 def _power_ports_in_rack(api, rack_id):
-    """All Power Ports whose device lives in this rack. Power Ports carry no
-    rack_id, so filter by the rack's devices."""
-    dev_ids = {getattr(d, "id", None) for d in api.dcim.devices.filter(rack_id=rack_id)}
+    """All Power Ports whose device lives in this rack AND is a real power
+    consumer (excludes the virtual PDU aggregation device, whose inlet is not a
+    load). Power Ports carry no rack_id, so filter by the rack's devices."""
+    dev_ids = set()
+    for d in api.dcim.devices.filter(rack_id=rack_id):
+        role = getattr(d, "role", None)
+        if getattr(role, "name", None) == "PDU":
+            continue   # the virtual PDU is the aggregation point, not a load
+        dev_ids.add(getattr(d, "id", None))
     dev_ids.discard(None)
     out = []
     for pp in api.dcim.power_ports.filter():
@@ -1313,20 +1319,64 @@ def _power_port_device_id(port):
     return getattr(port, "device_id", None)
 
 
-def _cable_power_port_to_feed(api, power_port, feed):
-    """Cable the device's Power Port to the rack's Power Feed (b-side), unless
-    a cable already links them."""
-    # existing cable on this power port?
-    cables = list(api.dcim.cables.filter(termination_a_id=power_port.id))
-    for c in cables:
-        if (getattr(c, "termination_b_type", None) and
-                getattr(c, "termination_b_id", None) == feed.id):
-            return c  # already cabled
-    # create the cable: A = device power port, B = power feed
-    return api.dcim.cables.create({
-        "a_terminations": [{"object_type": "dcim.powerport", "object_id": power_port.id}],
-        "b_terminations": [{"object_type": "dcim.powerfeed", "object_id": feed.id}],
-        "status": "connected"})
+_PDU_DEVICE_TYPE = {}
+
+def _get_or_create_pdu(api, rack_id, site_id):
+    """Ensure a virtual PDU device for per-rack power aggregation, with the
+    given rack/site. NetBox constraints drive this: a Power Feed terminates on
+    exactly ONE downstream object, so feed->PDU-inlet and each device PSU
+    cables to a PDU outlet; NetBox sums outlet-connected draws for utilization.
+    Returns the PDU device record."""
+    if rack_id in _PDU_DEVICE_TYPE:
+        return _PDU_DEVICE_TYPE[rack_id]
+    mfr_id = get_or_create_manufacturer("Generic")
+    role_id = get_or_create_role("PDU")
+    dt_id = get_or_create_device_type("PDU", mfr_id)
+    rack = api.dcim.racks.get(id=rack_id)
+    rack_name = getattr(rack, "name", f"rack-{rack_id}")
+    name = f"PDU-{rack_name}"
+    pdu = api.dcim.devices.get(name=name, rack_id=rack_id)
+    if pdu is None:
+        pdu = api.dcim.devices.create({
+            "name": name, "device_type": dt_id, "role": role_id,
+            "site": site_id, "rack": rack_id, "status": "active",
+            "comments": "Virtual PDU for per-rack power aggregation (netbox-sync)"})
+        log("INFO", f"  created virtual PDU {name} for {rack_name}")
+    _PDU_DEVICE_TYPE[rack_id] = pdu
+    return pdu
+
+
+def _get_or_create_pdu_inlet(api, pdu):
+    pp = api.dcim.power_ports.get(device_id=pdu.id, name="inlet")
+    if pp:
+        return pp
+    return api.dcim.power_ports.create({
+        "device": pdu.id, "name": "inlet", "type": "iec-60320-c14"})
+
+
+def _get_or_create_pdu_outlet(api, pdu, device, inlet):
+    """Ensure a PDU outlet named for the connected device, fed from the PDU
+    inlet (NetBox uses the outlet.power_port link to roll draw up to the inlet).
+    """
+    name = getattr(device, "name", None) or f"dev-{getattr(device,'id','x')}"
+    o = api.dcim.power_outlets.get(device_id=pdu.id, name=name)
+    if o:
+        return o
+    return api.dcim.power_outlets.create({
+        "device": pdu.id, "name": name, "type": "iec-60320-c13",
+        "power_port": getattr(inlet, "id", None)})
+
+
+def _try_cable(api, a_type, a_id, b_type, b_id):
+    """Create a cable between two terminations. Returns (record, error)."""
+    try:
+        c = api.dcim.cables.create({
+            "a_terminations": [{"object_type": a_type, "object_id": a_id}],
+            "b_terminations": [{"object_type": b_type, "object_id": b_id}],
+            "status": "connected"})
+        return c, None
+    except Exception as e:
+        return None, str(e)
 
 
 def sync_device_power(dev_id, watts):
@@ -1349,11 +1399,28 @@ def sync_device_power(dev_id, watts):
         if current != int(watts):
             api.dcim.power_ports.update([{"id": pp.id, "allocated_draw": int(watts)}])
         feed = _get_rack_feed(api, rack_id)
-        if feed is not None:
-            try:
-                _cable_power_port_to_feed(api, pp, feed)
-            except Exception as e:
-                log("DEBUG", f"  power cable id={dev_id}->feed {feed.id}: {e}")
+        if feed is None:
+            return True
+        # Wire feed -> PDU inlet -> device PSU outlet (NetBox power topology).
+        # The PDU aggregates all device draws so the feed's utilization computes.
+        site = getattr(dev, "site", None)
+        site_id = getattr(site, "id", None) if site else None
+        pdu = _get_or_create_pdu(api, rack_id, site_id)
+        if getattr(dev, "id", None) == getattr(pdu, "id", None):
+            return True   # never cable the PDU to itself
+        inlet = _get_or_create_pdu_inlet(api, pdu)
+        if getattr(feed, "cable", None) is None:
+            _, err = _try_cable(api, "dcim.powerfeed", feed.id,
+                                "dcim.powerport", inlet.id)
+            if err:
+                log("DEBUG", f"  power: feed->PDU-inlet for rack {rack_id}: {err}")
+        if getattr(pp, "cable", None) is None:
+            outlet = _get_or_create_pdu_outlet(api, pdu, dev, inlet)
+            if getattr(outlet, "cable", None) is None:
+                _, err = _try_cable(api, "dcim.powerport", pp.id,
+                                    "dcim.poweroutlet", outlet.id)
+                if err:
+                    log("DEBUG", f"  power: device id={dev_id} outlet cable: {err}")
         return True
     except Exception as e:
         log("WARN", f"  power sync failed for device id={dev_id}: {e}")

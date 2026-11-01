@@ -1314,6 +1314,10 @@ def _power_sync_pass():
         for dev in api.dcim.devices.filter(rack_id=rack_id):
             dt = getattr(dev, "device_type", None)
             model = getattr(dt, "model", None) if dt else None
+            # The virtual PDU is the aggregation point, not a load — exclude it.
+            role = getattr(dev, "role", None)
+            if getattr(role, "name", None) == "PDU":
+                continue
             cf = getattr(dev, "custom_fields", None) or {}
             # Live Redfish reading (written this run by the server collect) is
             # preferred; otherwise fall back to the configurable model default.
