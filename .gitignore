@@ -4,6 +4,11 @@ _env
 *.env
 !.env.example
 fortigate_tokens.txt
+# Real infrastructure addresses — must never be committed. Use <netbox-host>
+# placeholders in .env.example / docs; keep real values only on the server.
+netbox-mcp/.env
+netbox-mcp/*.env
+!netbox-mcp/.env.example
 
 # Personal / private working copies
 my personal code/
