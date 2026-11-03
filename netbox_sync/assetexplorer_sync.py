@@ -148,13 +148,32 @@ def sync_assetexplorer():
         if cur is not None and cur.name.lower() != rec_name:
             # Names differ — could be a rename (fine) OR a stale serial
             # (dangerous: AE says this serial belongs to a different name).
-            # Detect stale: AE has ANOTHER asset whose name matches the
+            #Detect stale: AE has ANOTHER asset whose name matches the
             # NetBox device but whose serial differs -> the NetBox serial
             # is outdated, don't trust this match.
             # But first: check if the names are actually the same device
             # (case-insensitive match handles AE uppercase vs NetBox mixed case)
             if cur.name.lower() == rec_name.lower():
                 pass  # same name, just different case — proceed with update
+            elif not (cur.custom_fields or {}).get("ae_asset_id"):
+                # Automation-created record (no AE provenance marker): the
+                # serial is the source of truth here. AE assigning the same
+                # serial to a differently-named asset does NOT invalidate the
+                # match — journals/renames use ME names, not device identity —
+                # unless the AE batch itself proves the NetBox serial is
+                # stale: another AE asset carries THIS record's NetBox name
+                # with a different serial. In that case fall through to the
+                # stale-serial check below.
+                nb_name = cur.name.lower()
+                ae_for_nb_name = by_ae_name.get(nb_name)
+                if (ae_for_nb_name is not None
+                        and ae_for_nb_name["serial"].lower() != serial.lower()):
+                    log("WARN", f"  serial {serial} is held by {cur.name!r} "
+                                f"but AE assigns {ae_for_nb_name['serial']} to "
+                                f"that name — stale serial, using name fallback")
+                    cur = None
+                # otherwise: keep the serial match (main automation is source
+                # of truth), updating only empty fields below.
             else:
                 nb_name = cur.name.lower()
                 ae_for_nb_name = by_ae_name.get(nb_name)
