@@ -82,6 +82,73 @@ def test_existing_index_prefers_automation_camera_over_me_placeholder(monkeypatc
     assert not any(u.get("id") == 11597 for u in ep.updated)
 
 
+def test_stale_serial_guard_still_fires_for_true_conflicts(monkeypatch):
+    """The site-scoping must not disable the guard: when the SAME name at the
+    SAME site carries a different serial in AE, the stale-serial caution still
+    applies (no create, tagged as skipped/ambiguous)."""
+    existing = FakeRecord(
+        11561, serial="202591568", name="Salon", asset_tag=None,
+        custom_fields={"cam_serial": "202591568", "cam_nvr": "Khorramabad-NVR"},
+    )
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    rec = _normalize(_asset(
+        id="4250",
+        name="Salon",
+        org_serial_number="DIFFERENT-SERIAL",
+        asset_tag="35310436",
+        product_type={"internal_name": None, "name": "CCTV"},
+        site={"name": "Khorramabad"},
+    ))
+    _patch_fetch(monkeypatch, [rec])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert not any(u.get("serial") == "DIFFERENT-SERIAL" for u in ep.updated)
+
+
+def test_identical_names_different_sites_do_not_trigger_stale_serial(monkeypatch):
+    """Index arbitration: both a placeholder ('202591568', no cam evidence) and
+    the automation camera ('Salon', cam_serial set) share the serial. The AE
+    sync must resolve to the automation camera — the placeholder must never
+    become the indexed record."""
+    automation_cam = FakeRecord(
+        11561, serial="202591568", name="Salon", asset_tag=None,
+        custom_fields={
+            "cam_serial": "202591568",
+            "cam_nvr": "Khorramabad-NVR",
+            "cam_channel": 4,
+            "cam_ip": "192.168.88.71",
+            "ae_asset_id": "4250",
+            "ae_department": "ICT",
+        },
+    )
+    placeholder = FakeRecord(
+        11597, serial="202591568", name="202591568", asset_tag=None,
+        custom_fields={
+            "ae_asset_id": "4250",
+            "ae_department": "ICT",
+        },
+    )
+    ep = FakeEndpoint([automation_cam, placeholder])
+    _patch_helpers(monkeypatch, ep)
+    rec = _normalize(_asset(
+        id="4250",
+        name="202591568",
+        org_serial_number="202591568",
+        asset_tag="35310436",
+        product_type={"internal_name": None, "name": "CCTV"},
+        site={"name": "Khorramabad"},
+    ))
+    _patch_fetch(monkeypatch, [rec])
+    ae_sync.sync_assetexplorer()
+    # must NOT create another device no matter which copy is in the index
+    assert ep.create_calls == 0, f"created: {ep.created}"
+    # and must update the AUTOMATION camera (id=11561), not the placeholder
+    upd = [u for u in ep.updated if u.get("id") == 11561]
+    assert upd and upd[0]["asset_tag"] == "35310436"
+    assert not any(u.get("id") == 11597 for u in ep.updated)
+
+
 def test_identical_names_different_sites_do_not_trigger_stale_serial(monkeypatch):
     """Root cause regression (live 202591568): another AE asset shares the
     NetBox device's *name* ('Salon') but lives at a different site (Ardabil).
