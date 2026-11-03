@@ -159,8 +159,7 @@ def sync_assetexplorer():
                 # Automation-created record (no AE provenance marker): the
                 # serial is the source of truth here. AE assigning the same
                 # serial to a differently-named asset does NOT invalidate the
-                # match — journals/renames use ME names, not device identity —
-                # unless the AE batch itself proves the NetBox serial is
+                # match — unless the AE batch itself proves the NetBox serial is
                 # stale: another AE asset carries THIS record's NetBox name
                 # with a different serial. In that case fall through to the
                 # stale-serial check below.
@@ -209,6 +208,15 @@ def sync_assetexplorer():
                 continue
         if cur is None and rec_name:
             cands = by_name.get(rec_name, [])
+            # Guard: never treat a placeholder device (no cam_serial / no
+            # cam_nvr — an AE-created bare record that failed enrichment) as a
+            # name-match. Such devices are duplicates waiting to be cleaned up,
+            # not the authoritative record to enrich.
+            real_cands = [c for c in cands
+                          if (c.custom_fields or {}).get("cam_serial")
+                          or (c.custom_fields or {}).get("cam_nvr")
+                          or not (c.custom_fields or {}).get("ae_asset_id")]
+            cands = real_cands
             if len(cands) == 1:
                 cur = cands[0]
                 name_matched += 1
