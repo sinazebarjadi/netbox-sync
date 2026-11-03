@@ -189,40 +189,58 @@ def sync_assetexplorer():
                 # THE SAME SITE with a different serial. Names repeat across
                 # sites (e.g. every site has a camera called 'Salon'), so a
                 # same-name hit elsewhere must not veto the match.
-                nb_name = cur.name.lower()
-                cur_site = (getattr(getattr(cur, "site", None), "name", "")
-                            or "").strip().lower()
-                rec_site = (rec.get("site") or "").strip().lower()
-                candidates = by_ae_name.get(nb_name) or []
-                stale = next(
-                    (c for c in candidates
-                     if str(c.get("serial") or "").lower() != serial.lower()
-                     and str(c.get("site") or "").strip().lower() in (cur_site, rec_site, "")),
-                    None,
-                )
-                if stale is not None:
-                    log("WARN", f"  serial {serial} is held by {cur.name!r} "
-                                f"but AE assigns {stale['serial']} to "
-                                f"that name — stale serial, using name fallback")
-                    cur = None
+                #
+                # EXCEPTION: when the current record is a live, NVR-discovered
+                # camera (has cam_serial), even a same-site ME name collision
+                # does not invalidate it. The NVR-reported serial on the live
+                # device is ground truth for that physical camera; ME naming is
+                # administrative metadata and may be stale on EITHER side. ME
+                # must never veto an automation identity — it may only fill
+                # missing fields below.
+                if (cur.custom_fields or {}).get("cam_serial"):
+                    pass  # live automation camera: keep the serial match
+                else:
+                    nb_name = cur.name.lower()
+                    cur_site = (getattr(getattr(cur, "site", None), "name", "")
+                                or "").strip().lower()
+                    rec_site = (rec.get("site") or "").strip().lower()
+                    candidates = by_ae_name.get(nb_name) or []
+                    stale = next(
+                        (c for c in candidates
+                         if str(c.get("serial") or "").lower() != serial.lower()
+                         and str(c.get("site") or "").strip().lower() in (cur_site, rec_site, "")),
+                        None,
+                    )
+                    if stale is not None:
+                        log("WARN", f"  serial {serial} is held by {cur.name!r} "
+                                    f"but AE assigns {stale['serial']} to "
+                                    f"that name — stale serial, using name fallback")
+                        cur = None
                 # otherwise: keep the serial match (main automation is source
                 # of truth), updating only empty fields below.
             else:
-                nb_name = cur.name.lower()
-                cur_site = (getattr(getattr(cur, "site", None), "name", "")
-                            or "").strip().lower()
-                candidates = by_ae_name.get(nb_name) or []
-                stale = next(
-                    (c for c in candidates
-                     if str(c.get("serial") or "").lower() != serial.lower()
-                     and str(c.get("site") or "").strip().lower() in (cur_site, "")),
-                    None,
-                )
-                if stale is not None:
-                    log("WARN", f"  serial {serial} is held by {cur.name!r} "
-                                f"but AE assigns {stale['serial']} to "
-                                f"that name — stale serial, using name fallback")
-                    cur = None
+                # ME-tagged record holding the serial under a different name.
+                # Default: same stale-serial guard, site-scoped. BUT if this
+                # record is automation-owned (live cam_serial), ME's naming
+                # claim cannot invalidate the physical identity — keep it.
+                if (cur.custom_fields or {}).get("cam_serial"):
+                    pass  # live automation camera — ME naming is metadata only
+                else:
+                    nb_name = cur.name.lower()
+                    cur_site = (getattr(getattr(cur, "site", None), "name", "")
+                                or "").strip().lower()
+                    candidates = by_ae_name.get(nb_name) or []
+                    stale = next(
+                        (c for c in candidates
+                         if str(c.get("serial") or "").lower() != serial.lower()
+                         and str(c.get("site") or "").strip().lower() in (cur_site, "")),
+                        None,
+                    )
+                    if stale is not None:
+                        log("WARN", f"  serial {serial} is held by {cur.name!r} "
+                                    f"but AE assigns {stale['serial']} to "
+                                    f"that name — stale serial, using name fallback")
+                        cur = None
 
         # ── fallback 1: hardware-serial suffix (NVR long serial vs the
         #    short serial printed on the camera / stored in ME) ───────────

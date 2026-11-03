@@ -125,6 +125,55 @@ def test_identical_names_different_sites_do_not_trigger_stale_serial(monkeypatch
     assert ep.updated[0]["asset_tag"] == "35310436"
 
 
+def test_live_camera_never_vetoed_by_me_naming(monkeypatch):
+    """Live NVR-discovered camera holds serial FK3348988 as 'F12.5-Stairs_Down'.
+    ME has a DIFFERENT asset 'F12.5-Stairs_Down' with serial FK3348917 at the
+    same site (HQ) — a genuine ME naming collision, not a stale serial.
+    AE must keep the automation record and only fill missing fields."""
+    automation_cam = FakeRecord(
+        9601, serial="FK3348988", name="F12.5-Stairs_Down", asset_tag=None,
+        custom_fields={
+            "cam_serial": "FK3348988",
+            "cam_nvr": "HQ-NVR-03",
+            "cam_channel": 21,
+            "cam_ip": "172.31.140.12",
+        },
+    )
+    ep = FakeEndpoint([automation_cam])
+    _patch_helpers(monkeypatch, ep)
+    # AE record for the OTHER camera with the same title
+    rec_alias = _normalize(_asset(
+        id="4240",
+        name="F12.5-Stairs_Down",
+        org_serial_number="FK3348917",
+        asset_tag="2124",
+        product_type={"internal_name": None, "name": "CCTV"},
+        site={"name": "HQ"},
+    ))
+    # AE record assigning OUR serial to a different name
+    rec_mine = _normalize(_asset(
+        id="735",
+        name="ZAFR-F12.5-Emergency Stairs_Up",
+        org_serial_number="FK3348988",
+        asset_tag="2135",
+        product_type={"internal_name": None, "name": "CCTV"},
+        site={"name": "HQ"},
+    ))
+    _patch_fetch(monkeypatch, [rec_mine, rec_alias])
+    ae_sync.sync_assetexplorer()
+    # no new device may be created
+    assert ep.create_calls == 0, f"created {ep.created}"
+    # the live camera keeps its identity (serial NEVER rewritten by name);
+    # the serial-matched record contributes its own tag. The alias record
+    # (different serial) must not change this device's identity, and must
+    # not be used to adopt or create anything here.
+    upd = [u for u in ep.updated if u.get("id") == 9601]
+    assert upd, "live camera must be updated by its serial-matched record"
+    assert upd[0]["asset_tag"] == "2135"
+    assert all(u.get("serial", "FK3348988") == "FK3348988" for u in ep.updated)
+    assert not any(u.get("id") != 9601 for u in ep.updated)
+
+
 def test_camera_serial_match_never_overwrites_existing_tag(monkeypatch):
     """Same invariant, tag side: when the automation record already carries an
     asset tag, AE must not overwrite it (a missing-field enrichment such as
