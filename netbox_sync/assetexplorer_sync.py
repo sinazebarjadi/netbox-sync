@@ -98,11 +98,14 @@ def sync_assetexplorer():
 
     # AE name -> record index, for detecting stale serials (AE says serial X
     # belongs to name N, but NetBox has serial X on a different name).
+    # Names are NOT unique across sites (every branch has a camera called
+    # 'Salon'), so keep ALL records per name — the stale-serial check must
+    # only consider same-site candidates, never a same-named asset elsewhere.
     by_ae_name = {}
     for rec in assets:
         n = (rec.get("name") or "").strip().lower()
-        if n and n not in by_ae_name:
-            by_ae_name[n] = rec
+        if n:
+            by_ae_name.setdefault(n, []).append(rec)
 
     # ── Layer 1: detect duplicate serials / asset tags inside ME itself ──
     # When ME has two assets with the same serial, matching by serial is
@@ -182,26 +185,42 @@ def sync_assetexplorer():
                 # serial is the source of truth here. AE assigning the same
                 # serial to a differently-named asset does NOT invalidate the
                 # match — unless the AE batch itself proves the NetBox serial is
-                # stale: another AE asset carries THIS record's NetBox name
-                # with a different serial. In that case fall through to the
-                # stale-serial check below.
+                # stale: another AE asset carries THIS record's NetBox name AT
+                # THE SAME SITE with a different serial. Names repeat across
+                # sites (e.g. every site has a camera called 'Salon'), so a
+                # same-name hit elsewhere must not veto the match.
                 nb_name = cur.name.lower()
-                ae_for_nb_name = by_ae_name.get(nb_name)
-                if (ae_for_nb_name is not None
-                        and ae_for_nb_name["serial"].lower() != serial.lower()):
+                cur_site = (getattr(getattr(cur, "site", None), "name", "")
+                            or "").strip().lower()
+                rec_site = (rec.get("site") or "").strip().lower()
+                candidates = by_ae_name.get(nb_name) or []
+                stale = next(
+                    (c for c in candidates
+                     if str(c.get("serial") or "").lower() != serial.lower()
+                     and str(c.get("site") or "").strip().lower() in (cur_site, rec_site, "")),
+                    None,
+                )
+                if stale is not None:
                     log("WARN", f"  serial {serial} is held by {cur.name!r} "
-                                f"but AE assigns {ae_for_nb_name['serial']} to "
+                                f"but AE assigns {stale['serial']} to "
                                 f"that name — stale serial, using name fallback")
                     cur = None
                 # otherwise: keep the serial match (main automation is source
                 # of truth), updating only empty fields below.
             else:
                 nb_name = cur.name.lower()
-                ae_for_nb_name = by_ae_name.get(nb_name)
-                if (ae_for_nb_name is not None
-                        and ae_for_nb_name["serial"].lower() != serial.lower()):
+                cur_site = (getattr(getattr(cur, "site", None), "name", "")
+                            or "").strip().lower()
+                candidates = by_ae_name.get(nb_name) or []
+                stale = next(
+                    (c for c in candidates
+                     if str(c.get("serial") or "").lower() != serial.lower()
+                     and str(c.get("site") or "").strip().lower() in (cur_site, "")),
+                    None,
+                )
+                if stale is not None:
                     log("WARN", f"  serial {serial} is held by {cur.name!r} "
-                                f"but AE assigns {ae_for_nb_name['serial']} to "
+                                f"but AE assigns {stale['serial']} to "
                                 f"that name — stale serial, using name fallback")
                     cur = None
 

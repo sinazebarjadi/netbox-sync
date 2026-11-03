@@ -82,6 +82,49 @@ def test_existing_index_prefers_automation_camera_over_me_placeholder(monkeypatc
     assert not any(u.get("id") == 11597 for u in ep.updated)
 
 
+def test_identical_names_different_sites_do_not_trigger_stale_serial(monkeypatch):
+    """Root cause regression (live 202591568): another AE asset shares the
+    NetBox device's *name* ('Salon') but lives at a different site (Ardabil).
+    That must NOT invalidate the exact serial match for the Khorramabad
+    device — the stale-serial guard is site-scoped. Expected: match the
+    existing automation camera, update only its missing tag, create nothing."""
+    from types import SimpleNamespace
+    existing = FakeRecord(
+        11561, serial="202591568", name="Salon", asset_tag=None,
+        site_id=99, site=SimpleNamespace(name="Khorramabad"),
+        custom_fields={
+            "cam_serial": "202591568",
+            "cam_nvr": "Khorramabad-NVR",
+            "cam_channel": 4,
+            "cam_ip": "192.168.88.71",
+        },
+    )
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    khorramabad_rec = _normalize(_asset(
+        id="4250",
+        name="202591568",
+        org_serial_number="202591568",
+        asset_tag="35310436",
+        product_type={"internal_name": None, "name": "CCTV"},
+        site={"name": "Khorramabad"},
+    ))
+    ardebil_rec = _normalize(_asset(
+        id="9999",
+        name="Salon",
+        org_serial_number="811685318",
+        asset_tag="35310399",
+        product_type={"internal_name": None, "name": "CCTV"},
+        site={"name": "Ardabil"},
+    ))
+    _patch_fetch(monkeypatch, [khorramabad_rec, ardebil_rec])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0, f"created {ep.created} instead of matching id=11561"
+    assert ep.update_calls == 1
+    assert ep.updated[0]["id"] == 11561
+    assert ep.updated[0]["asset_tag"] == "35310436"
+
+
 def test_camera_serial_match_never_overwrites_existing_tag(monkeypatch):
     """Same invariant, tag side: when the automation record already carries an
     asset tag, AE must not overwrite it (a missing-field enrichment such as
