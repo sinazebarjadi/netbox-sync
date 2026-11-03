@@ -235,6 +235,13 @@ def sync_assetexplorer():
                 else:
                     log("WARN", f"  name {rec['name']!r} is ambiguous "
                                 f"({len(cands)} devices) — skipped")
+            elif len(cands) == 0:
+                # Only placeholder devices matched by name (AE-created bare
+                # records that failed enrichment). Skip — creating would just
+                # mint another duplicate.
+                skipped_bad_serial += 1
+                log("WARN", f"  name {rec['name']!r} matched only placeholder "
+                            f"devices (no cam evidence) — skipping")
 
         if cur is not None:
             # ── matched device -> enrich ONLY missing information ────────
