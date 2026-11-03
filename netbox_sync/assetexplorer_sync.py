@@ -51,20 +51,42 @@ def sync_assetexplorer():
     existing = {}
     by_name = {}
     by_suffix = {}   # trailing-9-char hardware serial -> devices
+    def _is_automation_owned(dev):
+        """A device the main automation created/discovered: identified by
+        sync evidence (cam/BMC/storage/switch/HA custom fields) rather than
+        the AE tag alone. AE also stamps ae_asset_id on enriched automation
+        records, so the presence of that marker alone does NOT make a device
+        ME-created — use the automation's own fingerprints instead."""
+        cf = getattr(dev, "custom_fields", None) or {}
+        return bool(
+            cf.get("cam_serial") or cf.get("cam_nvr")
+            or cf.get("bmc_ip") or cf.get("storage_ip")
+            or cf.get("cisco_ip") or cf.get("san_switch_wwn")
+            or cf.get("fortigate_ip") or cf.get("fortiweb_ip")
+            or cf.get("nvr_ip") or cf.get("cam_ip")
+        )
+
     for d in api.dcim.devices.filter():
         s = (d.serial or "").strip().lower()
         if s:
-            # Prefer the device WITHOUT ae_asset_id (automation-created)
-            # over the one WITH ae_asset_id (ME-created). If the serial is
-            # already in the index and the existing device has ae_asset_id,
-            # replace it with this one (which might not have it).
+            # Prefer the automation-owned record over an ME-created bare
+            # duplicate sharing the same serial. Automation ownership is
+            # detected via sync evidence (cam_serial/cam_nvr/BMC IP/etc),
+            # because AE also backfills ae_asset_id onto enriched automation
+            # records, making that marker alone unreliable for arbitration.
             if s not in existing:
                 existing[s] = d
+            elif _is_automation_owned(existing[s]):
+                # Existing device is automation-owned — keep it
+                pass
+            elif _is_automation_owned(d):
+                # This one is automation-owned — prefer it over the placeholder
+                existing[s] = d
             elif not (existing[s].custom_fields or {}).get("ae_asset_id"):
-                # Existing device has no ae_asset_id (automation-created) — keep it
+                # Neither shows automation evidence; keep the first record
+                # (matches prior behaviour)
                 pass
             else:
-                # Existing device has ae_asset_id (ME-created) — replace with this one
                 existing[s] = d
             sfx = _serial_suffix(s)
             if sfx:
