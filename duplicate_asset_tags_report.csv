@@ -1,0 +1,49 @@
+asset_tag,device_name,serial_number,location,site,status,netbox_name,netbox_site,netbox_status,netbox_ip
+2130,ZAFR-F11-Stairs_Up,F98498409,-,HQ,In Use,F11-Stairs_Up,HQ,active,172.31.140.25/32
+2130,ZAFR-F12-Emergency Stairs Entrance,FK3348935,F12-Emergency Stairs Entrance,HQ,In Use,F12-Emergency Stairs Entrance,HQ,active,172.31.140.20/32
+35310054,MLSD-F3-Beetle,C79938095,F3-Beetle,Mollasadra,In Use,MLSD-F3-Beetle,Mollasadra,active,
+35310054,MLSD-Roof,743355394,Roof,Mollasadra,In Use,MLSD-Roof,Mollasadra,active,
+35310156,672748420,672748420,Warehouse,HQ,In Store,672748420,HQ,inventory,
+35310156,811684153,811684153,mashhad,Mashhad,In Use,F8-WC,Mashhad,active,192.168.96.76/32
+35310254,2g01fc4pag00367,2g01fc4pag00367,Warehouse,HQ,In Store,INV-2g01fc4pag00367,HQ,inventory,
+35310254,MLSD-F4-S Door,C79937994,F4-S Door,Mollasadra,In Use,F4-S Door,Mollasadra,active,192.168.236.147/32
+35310255,2G01FC4PAG00633,2G01FC4PAG00633,Warehouse,HQ,In Store,INV-2G01FC4PAG00633,HQ,inventory,
+35310255,MLSD-F4-Stock,D04629813,F4-Stock,Mollasadra,In Use,F4-Stock,Mollasadra,active,192.168.236.152/32
+35310316,754817789,754817789,Mashhad,Mashhad,In Use,F8-ops NW,Mashhad,active,192.168.96.87/32
+35310316,SDGH-F1-Stock,J24230598,F1-Stock,Sadeghiyeh,In Use,F1-Stock,Sadeghiyeh,active,192.168.252.81/32
+35310320,C79938096,C79938096,F3,Karaj,In Use,General Service,Karaj,active,192.168.32.81/32
+35310320,MLSD-F6-S Balcony,D12718396,F6-S Balcony,Mollasadra,In Use,F6-S Balcony,Mollasadra,active,192.168.236.205/32
+35310348,232620983,232620983,Ahvaz,Ahvaz,In Use,232620983,Ahvaz,active,
+35310348,MLSD-F04,202591615,F04,Mollasadra,In Use,F4,Mollasadra,active,192.168.236.195/32
+35310349,MLSD-F1-Kitchen,811682621,F1-Kitchen,Mollasadra,In Use,F1-Kitchen,Mollasadra,active,192.168.236.211/32
+35310349,MLSD-F1-Salon,811685032,F1-Salon,Mollasadra,In Use,F1-Salon,Mollasadra,active,192.168.236.219/32
+35310525,811690279,811690279,Tabriz,Tabriz,In Use,F4-Entrance,Tabriz,active,192.168.208.78/32
+35310525,F8-Tech,237743179,F8-Tech,HQ,In Use,F8-Tech,HQ,active,172.31.60.92/32
+35310526,4d0130epag9d4df,4d0130epag9d4df,Warehouse,HQ,In Store,INV-4d0130epag9d4df,HQ,inventory,
+35310526,MLSD-F3-Security Room,232621016,F3-Security Room,Mollasadra,In Use,F3-Security Room,Mollasadra,active,192.168.236.160/32
+35310551,811690091,811690091,Sari,Sari,In Use,811690091,Sari,active,
+35310551,MLSD-F6-Dining Room,237743561,F6-Dining Room,Mollasadra,In Use,F6-Dining Room,Mollasadra,active,192.168.236.137/32
+35310639,202565028,202565028,warehouse,HQ,In Store,202565028,HQ,inventory,
+35310639,J21083197,J21083197,Warehouse,HQ,In Store,J21083197,HQ,inventory,
+35310727,811683068,811683068,Oroumieh,Urmia,In Use,Stock Stairs,Urmia,active,192.168.192.70/32
+35310727,L50293309,L50293309,Oroumieh,Urmia,In Use,Exit Stairs,Urmia,offline,192.168.192.79/32
+35310968,10146-E Kitchen,FK3349045,10146-E Kitchen,HQ,In Use,10125-ICT,HQ,active,172.31.100.125/32
+35310968,FK3349000,FK3349000,10146-E Kitchen,HQ,In Use,10146-E Kitchen,HQ,active,172.31.100.146/32
+35311009,090138-E Store Room,FK3349040,090138-E Store Room,HQ,In Use,,,,
+35311009,FK3349050,FK3349050,090138-E Store Room,HQ,In Use,090138-E Store Room,HQ,active,172.31.90.138/32
+41410065,210235XAX93239000090,210235XAX93239000090,Warehouse,HQ,In Store,210235XAX93239000090,HQ,inventory,
+41410065,WX62DA3PVUV0,WX62DA3PVUV0,Khoramabad,Khorramabad,In Use,,,,
+43110020,FCW2140A0JD,FCW2140A0JD,warehouse,HQ,In Store,FCW2140A0JD,HQ,inventory,
+43110020,R17-ToR-SW02,FCW2108A2RS,R17,Afranet,In Use,R17-ToR-SW02,Afranet,active,
+43110039,14A10C9A811165,14A10C9A811165,Warehouse,HQ,In Store,14A10C9A811165,HQ,inventory,
+43110039,F8-SW-E-01,FOC2009W20A,F8,HQ,In Use,F8-SW-E-01,HQ,active,172.31.1.80/24
+43110176,FCW2036B55A,FCW2036B55A,warehouse,HQ,In Store,FCW2036B55A,HQ,inventory,
+43110176,R17-ISP-SW01,FOC2249U0QT,R17,Afranet,In Use,R17-ISP-SW,Afranet,active,192.168.17.253/32
+44510044,B4FBE4C365E3,B4FBE4C365E3,Zahedan,Zahedan,In Use,Zahedan_AP1,Zahedan,active,192.168.122.11/32
+44510044,Hamedan-ACP-01,,Hamedan,Hamedan,In Use,,,,
+44510146,F1,b4fbe4c35568,F1,Mollasadra,In Use,F1,Mollasadra,active,192.168.236.14/32
+44510146,Pardis-SRV Room,788a20d937d5,Server room,Pardis,In Use,AP-ServerRoom,Pardis,active,192.168.244.23/32
+44510296,788A20D925F7,788A20D925F7,Mashhad,Mashhad,In Use,Mashhad_AP5 (701),Mashhad,active,192.168.96.14/32
+44510296,Server Room,7845582696b4,Server  Room,HQ,In Use,Server  Room,HQ,active,172.31.2.254/32
+68410008,811690112,811690112,mashhad,Mashhad,In Use,F8-Gaming room,Mashhad,active,192.168.96.72/32
+68410008,J33572390,J33572390,Sari,Sari,In Use,J33572390,Sari,active,
