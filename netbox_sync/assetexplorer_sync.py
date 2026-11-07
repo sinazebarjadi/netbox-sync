@@ -27,6 +27,26 @@ _SERIAL_SUFFIX_LEN = 9   # Hikvision hardware serial = trailing 9 chars of the
 _VENTURE_FIELD = "udf_sline_901"   # same key the collector reads back
 _VENTURE_VALUE = "Central"
 
+# Exact Venture assignment rules enforced during enrichment. Earlier rules win.
+# Rule 2 is deliberately overwrite-capable: for the 8-digit CAB tags the user
+# requested, ME is authoritative for Venture only. Rule 1 preserves the old
+# fill-empty-only behaviour for all other Venture traffic.
+_VENTURE_RULES = (
+    {"prefix": "3531", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "", "length": 4, "value": "Central", "overwrite": False},
+)
+
+
+def _venture_assignment(rec):
+    """Return (value, overwrite) for an AE record's Venture rule, else None."""
+    tag = (rec.get("asset_tag") or "").strip()
+    if not tag.isdigit():
+        return None
+    for rule in _VENTURE_RULES:
+        if len(tag) == rule["length"] and tag.startswith(rule["prefix"]):
+            return rule["value"], rule["overwrite"]
+    return None
+
 
 def _is_venture_write_target(rec):
     """True when the ME asset is in the Venture scope: exact-4-digit asset tag,
@@ -35,11 +55,12 @@ def _is_venture_write_target(rec):
     (AE_TYPE_TO_ROLE: Server->Server, CCTV->Camera, Storage Device->Storage),
     so we scope on rec['role']."""
     tag = (rec.get("asset_tag") or "").strip()
-    if len(tag) != 4 or not tag.isdigit():
+    if not tag.isdigit():
         return False
     if not rec.get("ae_id"):
         return False
-    return rec.get("role") in {"Server", "Camera", "Storage"}
+    return _venture_assignment(rec) is not None and rec.get("role") in {
+        "Server", "Camera", "Storage"}
 
 def _serial_suffix(s):
     """Trailing 9 alphanumeric chars, upper-cased — the physical hardware
@@ -347,16 +368,20 @@ def sync_assetexplorer():
                 update_payload["custom_fields"] = cf
                 changed = True
 
-            # Venture enrichment (only if empty in NetBox — never overwrite an
-            # existing value; AE is not authoritative over a venture already set).
-            ae_venture = (rec.get("venture") or "").strip()
+            # Venture enrichment follows the explicit tag assignment rules.
+            # Ordinary assets are fill-empty-only; the 3531nnnn rule is the one
+            # scoped overwrite, because the user declared those tags authoritative
+            # for Venture=CAB. Everything else in custom_fields stays intact.
+            rule = _venture_assignment(rec)
             nb_venture = str((cur.custom_fields or {}).get("venture") or "").strip()
-            if not nb_venture and ae_venture:
-                cf = dict(update_payload.get("custom_fields")
-                          or cur.custom_fields or {})
-                cf["venture"] = ae_venture
-                update_payload["custom_fields"] = cf
-                changed = True
+            if rule:
+                venture_value, overwrite = rule
+                if nb_venture != venture_value and (overwrite or not nb_venture):
+                    cf = dict(update_payload.get("custom_fields")
+                              or cur.custom_fields or {})
+                    cf["venture"] = venture_value
+                    update_payload["custom_fields"] = cf
+                    changed = True
 
             # Serial fallback: fill NetBox serial from ME ONLY when empty.
             # The discovery automation (Redfish/iLO) is the primary source —
@@ -380,9 +405,14 @@ def sync_assetexplorer():
                                     f"{cur.name} -> {ae_serial}")
                 except Exception as e:
                     if "asset tag already exists" in str(e):
+                        retry_payload = {"id": update_payload["id"]}
+                        if update_payload.get("custom_fields"):
+                            retry_payload["custom_fields"] = update_payload["custom_fields"]
+                        api.dcim.devices.update([retry_payload])
                         matched_skipped += 1
                         log("WARN", f"  asset-tag {ae_tag} held by another "
-                                    f"device — skipped for {rec.get('serial')}")
+                                    f"device — updated custom_fields only for "
+                                    f"{rec.get('serial')}")
                     else:
                         failures += 1
                         failure_lines.append(
@@ -406,6 +436,17 @@ def sync_assetexplorer():
                 failures += 1
                 failure_lines.append(f"{serial}: inventory item failed: {e}")
                 log("ERROR", f"  AE inventory item failed for {serial}: {e}")
+            continue
+
+        # ── no match at all — CAB rule is explicitly enrichment-only. ─────
+        # Exact 3531nnnn tags may be shared by multiple ME records. Creating a
+        # new device under such a tag cannot be made deterministic without a
+        # matching serial; skip rather than mint a duplicate/placeholder.
+        rule = _venture_assignment(rec)
+        if rule and rule[0] == "CAB" and rule[1]:
+            skipped_bad_serial += 1
+            log("WARN", f"  CAB-target {rec.get('asset_tag')} has no serial-matched "
+                        f"device in NetBox — skipping create for {rec['name']!r}")
             continue
 
         # ── no match at all -> create (serial required for safe identity) ─

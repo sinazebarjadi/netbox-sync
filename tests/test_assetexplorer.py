@@ -361,11 +361,18 @@ def test_tag_conflict_on_update_is_warn_not_failure(monkeypatch, capsys):
                           custom_fields={"ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
-    ep.update = lambda rows: (_ for _ in ()).throw(RuntimeError(
-        "400 Bad Request: {'asset_tag': ['device with this asset tag already exists.']}"))
+    calls = []
+    def update(rows):
+        calls.append(rows)
+        if len(calls) == 1:
+            raise RuntimeError(
+                "400 Bad Request: {'asset_tag': ['device with this asset tag already exists.']}")
+        return FakeEndpoint.update(ep, rows)
+    ep.update = update
     _patch_fetch(monkeypatch, [_normalize(_asset())])
     ae_sync.sync_assetexplorer()   # must not raise
     assert "held by another" in capsys.readouterr().out
+    assert len(calls) == 2
 
 
 # ── name fallback (serial missing in NetBox) ────────────────────────────────

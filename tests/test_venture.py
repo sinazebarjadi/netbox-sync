@@ -7,6 +7,8 @@ Covers:
 - enrichment fills venture ONLY when empty in NetBox, never overwrites
 - ME writer helpers select exactly 4-digit-tag CCTV/Server/Storage Device assets
 """
+from types import SimpleNamespace
+
 from netbox_sync.collectors import assetexplorer as ae_mod
 import netbox_sync.assetexplorer_sync as ae_sync
 import netbox_sync.netbox as nb_mod
@@ -86,11 +88,12 @@ def test_payload_venture_absent_value_when_none(monkeypatch):
 def test_venture_filled_when_empty_in_netbox(monkeypatch):
     """Serial match + venture empty in NetBox -> populate from ME."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="41510140",
+                          asset_tag="1431",
                           custom_fields={"bmc_ip": "10.0.0.1"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     _patch_fetch(monkeypatch, [_normalize(_asset(
+        asset_tag="1431",
         udf_fields={"udf_sline_901": "Central"}))])
     ae_sync.sync_assetexplorer()
     upd = ep.updated[0]
@@ -99,7 +102,91 @@ def test_venture_filled_when_empty_in_netbox(monkeypatch):
     assert upd["custom_fields"]["bmc_ip"] == "10.0.0.1"
 
 
-def test_venture_not_overwritten_when_present_in_netbox(monkeypatch):
+class _TagConflictEndpoint(FakeEndpoint):
+    """Reject an update that includes a conflicting tag, allowing no-tag retry."""
+    def update(self, items):
+        if any("asset_tag" in u for u in items):
+            raise Exception("asset tag already exists")
+        return super().update(items)
+
+
+def test_cab_survives_conflicting_asset_tag(monkeypatch):
+    """An unrelated tag conflict must not discard the Venture update."""
+    existing = FakeRecord(31, serial="811690091", name="F6-Dining Room",
+                          asset_tag="35310551",
+                          custom_fields={"ae_asset_id": "1577"})
+    ep = _TagConflictEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    rec = _normalize(_cab_asset_with_serial("811690091"))
+    _patch_fetch(monkeypatch, [rec])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert len(ep.updated) == 1, ep.updated
+    upd = ep.updated[0]
+    assert "asset_tag" not in upd
+    assert upd["custom_fields"]["venture"] == "CAB"
+
+
+def _cab_asset_with_serial(serial):
+    return _asset(id="9000", asset_tag="35310054", name="MLSD-Real-Camera",
+                  org_serial_number=serial,
+                  product_type={"internal_name": "CCTV"},
+                  department={"name": "ICT"},
+                  udf_fields={"udf_sline_901": "CAB"})
+
+
+def test_targeted_cab_overrides_existing_venture_only(monkeypatch):
+    """For an exact 3531nnnn ME tag, CAB must replace whatever Venture the
+    matching NetBox device already has; other device fields do not change."""
+    existing = FakeRecord(20, serial="743355394", name="MLSD-Real-Camera",
+                          asset_tag="35310054", role="Camera", site="HQ",
+                          custom_fields={"venture": "Central",
+                                         "cam_nvr": "MLSD-NVR-01",
+                                         "cam_ip": "192.168.62.1",
+                                         "bmc_ip": "10.0.0.1"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    rec = _normalize(_cab_asset_with_serial("743355394"))
+    _patch_fetch(monkeypatch, [rec])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert len(ep.updated) == 1
+    upd = ep.updated[0]
+    assert upd["id"] == 20
+    cf = upd["custom_fields"]
+    assert cf["venture"] == "CAB"
+    assert cf["cam_nvr"] == "MLSD-NVR-01"
+    assert cf["cam_ip"] == "192.168.62.1"
+    assert cf["bmc_ip"] == "10.0.0.1"
+    assert "asset_tag" not in upd and "serial" not in upd and "name" not in upd
+
+
+def test_targeted_cab_does_not_touch_different_serial_device(monkeypatch):
+    """A shared 8-digit tag must never cross-link a different serial."""
+    existing = FakeRecord(21, serial="C79938095", name="Other-Camera",
+                          site=SimpleNamespace(name="HQ-Other"),
+                          asset_tag="35310054",
+                          custom_fields={"venture": "Central"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_cab_asset_with_serial("743355394"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert ep.updated == [], ep.updated
+
+
+def test_targeted_cab_update_is_idempotent_when_already_correct(monkeypatch):
+    existing = FakeRecord(20, serial="743355394", name="MLSD-Real-Camera",
+                          asset_tag="35310054",
+                          custom_fields={"ae_department": "ICT",
+                                         "venture": "CAB",
+                                         "cam_ip": "10.0.0.1"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_cab_asset_with_serial("743355394"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert ep.updated == [], ep.updated
     """NetBox already has a venture value -> AE must NOT overwrite it."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
                           asset_tag="41510140",
