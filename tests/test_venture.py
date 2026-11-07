@@ -202,6 +202,53 @@ def test_box_idempotent_when_already_correct(monkeypatch):
     assert ep.updated == [], ep.updated
 
 
+def _nxp_asset_with_serial(serial):
+    return _asset(id="9200", asset_tag="35350001", name="GF0000192",
+                  org_serial_number=serial,
+                  product_type={"internal_name": "CCTV"},
+                  udf_fields={"udf_sline_901": "NXP"})
+
+
+def test_nxp_rule_covers_exact_3535_prefixed_eight_digit_tags_only():
+    for tag in ("35350001", "35350040"):
+        assert ae_sync._venture_assignment({"asset_tag": tag}) == ("NXP", True), tag
+    assert ae_sync._venture_assignment({"asset_tag": "3535"}) == ("Central", False)
+    assert ae_sync._venture_assignment({"asset_tag": "3535000"}) is None
+    assert ae_sync._venture_assignment({"asset_tag": "353500000"}) is None
+    assert ae_sync._venture_assignment({"asset_tag": "3535000a"}) is None
+    assert ae_sync._venture_assignment({"asset_tag": "35300061"}) == ("BOX", True)
+
+
+def test_nxp_sync_writes_box_value_only_for_matching_serial(monkeypatch):
+    existing = FakeRecord(51, serial="GF0000192", name="GF0000192",
+                          asset_tag="35350001",
+                          custom_fields={"venture": "Central", "cam_ip": "10.19.4.10"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_nxp_asset_with_serial("GF0000192"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert len(ep.updated) == 1
+    cf = ep.updated[0]["custom_fields"]
+    assert cf["venture"] == "NXP"
+    assert cf["cam_ip"] == "10.19.4.10"
+
+
+def test_nxp_ids_idempotent_and_no_cross_serial_touch(monkeypatch):
+    matching = FakeRecord(52, serial="GF0000192", name="GF0000192",
+                          asset_tag="35350001",
+                          custom_fields={"ae_department": "ICT", "venture": "NXP"})
+    other = FakeRecord(53, serial="GF0000193", name="Other Camera",
+                       asset_tag="35350002",
+                       custom_fields={"venture": "Central"})
+    ep = FakeEndpoint([matching, other])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_nxp_asset_with_serial("GF0000192"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert ep.updated == [], ep.updated
+
+
 def _cab_asset_with_serial(serial):
     return _asset(id="9000", asset_tag="35310054", name="MLSD-Real-Camera",
                   org_serial_number=serial,

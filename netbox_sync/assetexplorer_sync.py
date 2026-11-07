@@ -32,6 +32,7 @@ _VENTURE_VALUE = "Central"
 # requested, ME is authoritative for Venture only. Rule 1 preserves the old
 # fill-empty-only behaviour for all other Venture traffic.
 _VENTURE_RULES = (
+    {"prefix": "3535", "length": 8, "value": "NXP", "overwrite": True},
     {"prefix": "3530", "length": 8, "value": "BOX", "overwrite": True},
     {"prefix": "4310", "length": 8, "value": "BOX", "overwrite": True},
     {"prefix": "4450", "length": 8, "value": "BOX", "overwrite": True},
