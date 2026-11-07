@@ -32,6 +32,9 @@ _VENTURE_VALUE = "Central"
 # requested, ME is authoritative for Venture only. Rule 1 preserves the old
 # fill-empty-only behaviour for all other Venture traffic.
 _VENTURE_RULES = (
+    {"prefix": "3530", "length": 8, "value": "BOX", "overwrite": True},
+    {"prefix": "4310", "length": 8, "value": "BOX", "overwrite": True},
+    {"prefix": "4450", "length": 8, "value": "BOX", "overwrite": True},
     {"prefix": "3531", "length": 8, "value": "CAB", "overwrite": True},
     {"prefix": "", "length": 4, "value": "Central", "overwrite": False},
 )
@@ -59,8 +62,12 @@ def _is_venture_write_target(rec):
         return False
     if not rec.get("ae_id"):
         return False
-    return _venture_assignment(rec) is not None and rec.get("role") in {
-        "Server", "Camera", "Storage"}
+    rule = _venture_assignment(rec)
+    if rule is None:
+        return False
+    if rule[0] == "Central":
+        return rec.get("role") in {"Server", "Camera", "Storage"}
+    return rec.get("role") in {"Camera", "Switch", "Access Point"}
 
 def _serial_suffix(s):
     """Trailing 9 alphanumeric chars, upper-cased — the physical hardware
@@ -438,14 +445,14 @@ def sync_assetexplorer():
                 log("ERROR", f"  AE inventory item failed for {serial}: {e}")
             continue
 
-        # ── no match at all — CAB rule is explicitly enrichment-only. ─────
-        # Exact 3531nnnn tags may be shared by multiple ME records. Creating a
-        # new device under such a tag cannot be made deterministic without a
-        # matching serial; skip rather than mint a duplicate/placeholder.
+        # ── no match at all — Venture rules are explicitly enrichment-only. ─
+        # Exact 8-digit Venture tags may be shared by multiple ME records.
+        # Creating a new device under such a tag cannot be made deterministic
+        # without a matching serial; skip rather than mint a duplicate/placeholder.
         rule = _venture_assignment(rec)
-        if rule and rule[0] == "CAB" and rule[1]:
+        if rule and rule[1]:
             skipped_bad_serial += 1
-            log("WARN", f"  CAB-target {rec.get('asset_tag')} has no serial-matched "
+            log("WARN", f"  venture-target {rec.get('asset_tag')} has no serial-matched "
                         f"device in NetBox — skipping create for {rec['name']!r}")
             continue
 

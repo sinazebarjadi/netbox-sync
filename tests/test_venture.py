@@ -127,6 +127,81 @@ def test_cab_survives_conflicting_asset_tag(monkeypatch):
     assert upd["custom_fields"]["venture"] == "CAB"
 
 
+def _box_asset_with_serial(serial, tag="35300061", product_type="CCTV",
+                           name="15056-Zafar"):
+    return _asset(id="9100", asset_tag=tag, name=name,
+                  org_serial_number=serial,
+                  product_type={"internal_name": product_type},
+                  udf_fields={"udf_sline_901": "BOX"})
+
+
+def test_box_rules_cover_requested_prefixes_only():
+    box_cases = ["35300061", "35300123", "43100010", "44500001"]
+    rejected_cases = ["3530012", "353001234", "3530006a", ""]
+    for tag in box_cases:
+        assert ae_sync._venture_assignment({"asset_tag": tag}) == ("BOX", True), tag
+    assert ae_sync._venture_assignment({"asset_tag": "35310054"}) == ("CAB", True)
+    assert ae_sync._venture_assignment({"asset_tag": "1431"}) == ("Central", False)
+    # Four-digit prefixes remain Central, not BOX.
+    assert ae_sync._venture_assignment({"asset_tag": "3530"}) == ("Central", False)
+    assert ae_sync._venture_assignment({"asset_tag": "4310"}) == ("Central", False)
+    assert ae_sync._venture_assignment({"asset_tag": "4450"}) == ("Central", False)
+    assert ae_sync._venture_assignment({"asset_tag": "41510140"}) is None
+    for tag in rejected_cases:
+        assert ae_sync._venture_assignment({"asset_tag": tag}) is None, tag
+
+
+def test_box_write_target_roles_include_camera_switch_ap():
+    for product_type in ("CCTV", "Switch", "Access Point"):
+        rec = _normalize(_box_asset_with_serial("SN123", product_type=product_type))
+        assert ae_sync._is_venture_write_target(rec), product_type
+    rec = _normalize(_box_asset_with_serial("SN123", product_type="Firewall"))
+    assert not ae_sync._is_venture_write_target(rec)
+
+
+def test_box_overrides_existing_venture_on_serial_match_only(monkeypatch):
+    existing = FakeRecord(41, serial="FB0225232", name="15056-Zafar",
+                          asset_tag="35300061",
+                          custom_fields={"venture": "Central",
+                                         "cam_ip": "192.168.80.24",
+                                         "cam_nvr": "GF-NVR"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_box_asset_with_serial("FB0225232"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert len(ep.updated) == 1
+    cf = ep.updated[0]["custom_fields"]
+    assert cf["venture"] == "BOX"
+    assert cf["cam_ip"] == "192.168.80.24"
+    assert cf["cam_nvr"] == "GF-NVR"
+
+
+def test_box_does_not_touch_different_serial_same_tag(monkeypatch):
+    existing = FakeRecord(42, serial="FB0225230", name="Different Serial",
+                          asset_tag="35300061",
+                          custom_fields={"venture": "Central"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_box_asset_with_serial("FB0225232"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert ep.updated == [], ep.updated
+
+
+def test_box_idempotent_when_already_correct(monkeypatch):
+    existing = FakeRecord(43, serial="FB0225232", name="15056-Zafar",
+                          asset_tag="35300061",
+                          custom_fields={"ae_department": "ICT",
+                                         "venture": "BOX", "cam_ip": "10.0.0.1"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    _patch_fetch(monkeypatch, [_normalize(_box_asset_with_serial("FB0225232"))])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert ep.updated == [], ep.updated
+
+
 def _cab_asset_with_serial(serial):
     return _asset(id="9000", asset_tag="35310054", name="MLSD-Real-Camera",
                   org_serial_number=serial,
@@ -215,20 +290,27 @@ def test_venture_absent_me_value_is_noop(monkeypatch):
         assert "venture" not in cf
 
 
-# ── ME write-target selection (4-digit tag + CCTV/Server/Storage) ───────────
+# ── ME write-target selection (Central + exact 8-digit Venture rules) ───────
 
 def test_is_venture_write_target_playbook():
     cases = [
         ("1431", "Server", True),
         ("1431", "CCTV", True),
         ("2221", "Storage Device", True),
-        ("41510140", "Server", False),     # 8-digit tag
-        ("1431", "Switch", False),         # wrong type
-        ("1431", "Workstation", False),
+        ("41510140", "Server", False),     # no Venture rule
+        ("1431", "Switch", False),         # Central stays original scope
+        ("1431", "Access Point", False),
+        ("35300061", "Switch", True),      # exact BOX prefix/type in scope
+        ("43100010", "Switch", True),
+        ("44500001", "CCTV", True),
+        ("44500001", "Access Point", True),
+        ("35310054", "CCTV", True),
+        ("35310054", "Firewall", False),
         ("", "Server", False),
         (None, "Server", False),
         ("13", "Server", False),           # too short
         ("14315", "Server", False),        # too long
+        ("Workstation", "Server", False),
     ]
     for tag, ptype, expected in cases:
         rec = _normalize(_asset(asset_tag=tag,
