@@ -23,6 +23,24 @@ from netbox_sync.utils import _invalid_serial
 _SERIAL_SUFFIX_LEN = 9   # Hikvision hardware serial = trailing 9 chars of the
                          # long NVR-reported serial (e.g. ...AAWRFB0225316)
 
+# ME udf key + value written for in-scope assets (4-digit tag, scoped types).
+_VENTURE_FIELD = "udf_sline_901"   # same key the collector reads back
+_VENTURE_VALUE = "Central"
+
+
+def _is_venture_write_target(rec):
+    """True when the ME asset is in the Venture scope: exact-4-digit asset tag,
+    has an ME id to PUT against, and is one of the three scoped product types.
+    The scoped ME product types map uniquely onto these NetBox roles
+    (AE_TYPE_TO_ROLE: Server->Server, CCTV->Camera, Storage Device->Storage),
+    so we scope on rec['role']."""
+    tag = (rec.get("asset_tag") or "").strip()
+    if len(tag) != 4 or not tag.isdigit():
+        return False
+    if not rec.get("ae_id"):
+        return False
+    return rec.get("role") in {"Server", "Camera", "Storage"}
+
 def _serial_suffix(s):
     """Trailing 9 alphanumeric chars, upper-cased — the physical hardware
     serial printed on the device / stored in ManageEngine."""
@@ -329,6 +347,17 @@ def sync_assetexplorer():
                 update_payload["custom_fields"] = cf
                 changed = True
 
+            # Venture enrichment (only if empty in NetBox — never overwrite an
+            # existing value; AE is not authoritative over a venture already set).
+            ae_venture = (rec.get("venture") or "").strip()
+            nb_venture = str((cur.custom_fields or {}).get("venture") or "").strip()
+            if not nb_venture and ae_venture:
+                cf = dict(update_payload.get("custom_fields")
+                          or cur.custom_fields or {})
+                cf["venture"] = ae_venture
+                update_payload["custom_fields"] = cf
+                changed = True
+
             # Serial fallback: fill NetBox serial from ME ONLY when empty.
             # The discovery automation (Redfish/iLO) is the primary source —
             # if it later provides a serial, it will overwrite this value
@@ -560,7 +589,8 @@ def _ensure_inventory_item(api, rec, existing_devices, by_name):
 def _payload(rec):
     cf = {"ae_asset_id":  str(rec["ae_id"]),
           "ae_department": rec.get("department"),
-          "ae_location":   rec.get("location")}
+          "ae_location":   rec.get("location"),
+          "venture":       rec.get("venture")}
     # Use Part Number (P/N) for device_type when available (more specific than
     # product.name, e.g. "C9200L-48P-4X-E V02" vs "C9200L").
     device_type_model = rec.get("part_number") or rec.get("model")

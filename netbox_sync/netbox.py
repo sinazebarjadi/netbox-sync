@@ -1089,6 +1089,7 @@ CUSTOM_FIELDS = [
     ("ae_asset_id",               "text",    "AssetExplorer asset ID"),
     ("ae_department",             "text",    "Department (AssetExplorer)"),
     ("ae_location",               "text",    "Location (AssetExplorer)"),
+    ("venture",                   "text",    "Venture (AssetExplorer)"),
 ]
 
 # Rack-scoped custom fields (object_types=["dcim.rack"]) — separate from the

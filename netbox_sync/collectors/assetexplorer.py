@@ -108,6 +108,8 @@ def _normalize(a, stats=None):
     product_name = ((a.get("product") or {}).get("name") or "").strip() or None
     # Capacity is in udf_sline_601 (e.g. "960GB", "8TB")
     capacity = (udf.get("udf_sline_601") or "").strip() or None
+    # Venture (Central/CAB/Doctor/BOX) lives in udf_sline_901.
+    venture = (udf.get("udf_sline_901") or "").strip() or None
 
     return {
         "ae_id":          a.get("id"),
@@ -133,4 +135,5 @@ def _normalize(a, stats=None):
         "description":    (a.get("description") or "").strip() or None,
         "used_by_name":   (used_by.get("name") or "").strip() or None,
         "used_by_serial": (used_by.get("org_serial_number") or "").strip() or None,
+        "venture":        venture,
     }
