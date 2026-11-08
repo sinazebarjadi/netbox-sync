@@ -14,7 +14,7 @@ from tests.test_netbox_sync import FakeEndpoint, FakeRecord, _fake_api
 def _asset(**kw):
     base = {
         "id": "32", "name": "AFRA-HOST-04", "org_serial_number": "6CU8474FTV",
-        "manufacturer": "HP", "asset_tag": "41510140",
+        "manufacturer": "HP", "asset_tag": "91010140",
         "state": {"name": "In Use"},
         "department": {"name": "ICT"},
         "site": {"name": "Afranet"},
@@ -32,7 +32,7 @@ def test_normalize_full_asset():
     rec = _normalize(_asset())
     assert rec["serial"] == "6CU8474FTV"
     assert rec["role"] == "Server"
-    assert rec["asset_tag"] == "41510140"
+    assert rec["asset_tag"] == "91010140"
     assert rec["is_component"] is False
 
 
@@ -162,7 +162,7 @@ def test_creates_new_device_for_unknown_serial(monkeypatch):
     assert ep.create_calls == 1
     p = ep.created[0]
     assert p["serial"] == "6CU8474FTV"
-    assert p["asset_tag"] == "41510140"
+    assert p["asset_tag"] == "91010140"
     assert p["custom_fields"]["ae_asset_id"] == "32"
     assert p["custom_fields"]["ae_department"] == "ICT"
     assert p["custom_fields"]["ae_location"] == "SHN R16 U15-16"
@@ -181,7 +181,7 @@ def test_asset_tag_synced_when_empty_in_netbox(monkeypatch):
     assert ep.update_calls == 1
     upd = ep.updated[0]
     assert upd["id"] == 9
-    assert upd["asset_tag"] == "41510140"
+    assert upd["asset_tag"] == "91010140"
 
 
 def test_existing_asset_tag_in_netbox_is_never_overwritten(monkeypatch):
@@ -199,7 +199,7 @@ def test_existing_asset_tag_in_netbox_is_never_overwritten(monkeypatch):
 
 def test_no_change_when_asset_tag_already_correct(monkeypatch):
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="41510140",
+                          asset_tag="91010140",
                           custom_fields={"bmc_ip": "10.0.0.1",
                                          "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
@@ -224,11 +224,11 @@ def test_no_change_when_ae_tag_empty(monkeypatch):
 
 def test_asset_tag_match_case_insensitive(monkeypatch):
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv",
-                          asset_tag="41510140",
+                          asset_tag="91010140",
                           custom_fields={"ae_department": "ICT"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
-    rec = _normalize(_asset(asset_tag="41510140"))
+    rec = _normalize(_asset(asset_tag="91010140"))
     _patch_fetch(monkeypatch, [rec])
     ae_sync.sync_assetexplorer()
     assert ep.update_calls == 0
@@ -237,7 +237,7 @@ def test_asset_tag_match_case_insensitive(monkeypatch):
 def test_skips_discovery_managed_device(monkeypatch):
     """Serial found, tag and department already set -> untouched."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="41510140",
+                          asset_tag="91010140",
                           custom_fields={"bmc_ip": "10.0.0.1",
                                          "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
@@ -250,7 +250,7 @@ def test_skips_discovery_managed_device(monkeypatch):
 def test_skip_only_even_for_ae_owned_device(monkeypatch):
     """Serial found -> only missing fields may be filled; others never overwritten."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="old-name",
-                          asset_tag="41510140",
+                          asset_tag="91010140",
                           custom_fields={"ae_asset_id": "32",
                                          "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
@@ -281,13 +281,13 @@ def test_serial_match_is_case_insensitive(monkeypatch):
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0
     assert ep.update_calls == 1
-    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert ep.updated[0]["asset_tag"] == "91010140"
 
 
 def test_case_insensitive_serial_still_skips_discovery_managed(monkeypatch):
     """Case-differing serial matches an existing device -> never a duplicate."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="41510140",
+                          asset_tag="91010140",
                           custom_fields={"bmc_ip": "10.0.0.1",
                                          "ae_department": "ICT"})
     ep = FakeEndpoint([existing])
@@ -337,7 +337,7 @@ def test_name_collision_adopts_blank_serial_device(monkeypatch):
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0                       # never creates
     assert ep.updated and ep.updated[0]["id"] == 21
-    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert ep.updated[0]["asset_tag"] == "91010140"
     assert "name" not in ep.updated[0]
     # Serial is filled from ME as fallback (Redfish will overwrite later)
     assert ep.updated[0]["serial"] == "MXQ62800GS"
@@ -392,7 +392,7 @@ def test_name_fallback_syncs_tag_when_serial_missing_in_netbox(monkeypatch):
     assert ep.update_calls == 1
     # Only asset_tag, ae_department, and serial enriched; name untouched
     assert ep.updated[0]["id"] == 21
-    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert ep.updated[0]["asset_tag"] == "91010140"
     assert "name" not in ep.updated[0]
     # Serial filled from ME as fallback (Redfish will overwrite later)
     assert ep.updated[0]["serial"] == "MXQ62800GS"
@@ -446,7 +446,7 @@ def test_serial_less_ae_asset_matched_by_name_not_created(monkeypatch):
     _patch_fetch(monkeypatch, [rec])
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0
-    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert ep.updated[0]["asset_tag"] == "91010140"
 
 
 # ── ME-internal duplicate serial handling ────────────────────────────────────
@@ -515,7 +515,7 @@ def test_serial_held_by_different_name_uses_name_fallback(monkeypatch, capsys):
     belongs to 'AFRA-HOST-103'. Must NOT update Afra-Host-101's tag; must
     fall through to name matching and find the real AFRA-HOST-103."""
     wrong = FakeRecord(1, name="Afra-Host-101", serial="MXQ714055Z",
-                       asset_tag="41510149",
+                       asset_tag="91010149",
                        site=SimpleNamespace(name="Afranet"),
                        custom_fields={"ae_department": "ICT"})
     right = FakeRecord(2, name="Afra-Host-103", serial="", asset_tag=None,
@@ -524,16 +524,16 @@ def test_serial_held_by_different_name_uses_name_fallback(monkeypatch, capsys):
     _patch_helpers(monkeypatch, ep)
     # AE has BOTH records — that's how the stale serial is detected
     rec_wrong = _normalize(_asset(name="AFRA-HOST-101", org_serial_number="USE6287HAY",
-                                  asset_tag="41510149"))
+                                  asset_tag="91010149"))
     rec_right = _normalize(_asset(name="AFRA-HOST-103", org_serial_number="MXQ714055Z",
-                                  asset_tag="41510148"))
+                                  asset_tag="91010148"))
     _patch_fetch(monkeypatch, [rec_wrong, rec_right])
     ae_sync.sync_assetexplorer()
     # wrong device untouched
     assert not any(u.get("id") == 1 for u in ep.updated)
     # right device got the tag; name NOT overwritten
     upd = [u for u in ep.updated if u.get("id") == 2]
-    assert upd and upd[0]["asset_tag"] == "41510148"
+    assert upd and upd[0]["asset_tag"] == "91010148"
     assert "name" not in upd[0]
     # Serial filled from ME as fallback (Redfish will overwrite later)
     assert upd[0]["serial"] == "MXQ714055Z"
@@ -545,20 +545,20 @@ def test_serial_conflict_warns_and_does_not_hijack(monkeypatch, capsys):
     and AE also has name B with a DIFFERENT serial -> stale serial in NetBox.
     The tag for name A must NOT be written to device B."""
     wrong = FakeRecord(1, name="Afra-Host-101", serial="MXQ714055Z",
-                       asset_tag="41510149",
+                       asset_tag="91010149",
                        site=SimpleNamespace(name="Afranet"), custom_fields={})
     ep = FakeEndpoint([wrong])
     _patch_helpers(monkeypatch, ep)
     # AE: AFRA-HOST-101 has serial USE6287HAY (the real one), and
     #     AFRA-HOST-103 has serial MXQ714055Z (which NetBox wrongly holds on 101)
     rec_a = _normalize(_asset(name="AFRA-HOST-101", org_serial_number="USE6287HAY",
-                              asset_tag="41510149"))
+                              asset_tag="91010149"))
     rec_b = _normalize(_asset(name="AFRA-HOST-103", org_serial_number="MXQ714055Z",
-                              asset_tag="41510148"))
+                              asset_tag="91010148"))
     _patch_fetch(monkeypatch, [rec_a, rec_b])
     ae_sync.sync_assetexplorer()
-    # device id=1 must NOT get tag 41510148 (that belongs to AFRA-HOST-103)
-    assert not any(u.get("asset_tag") == "41510148" for u in ep.updated)
+    # device id=1 must NOT get tag 91010148 (that belongs to AFRA-HOST-103)
+    assert not any(u.get("asset_tag") == "91010148" for u in ep.updated)
     assert "stale serial" in capsys.readouterr().out
 
 
@@ -570,7 +570,7 @@ def test_inventory_item_skipped_when_unchanged(monkeypatch):
     existing_item = FakeRecord(50, device_id=10, name="LIT20250K6Y",
                                serial="LIT20250K6Y", role=8, manufacturer=5,
                                part_id="power switch",
-                               description="Department: ICT | Asset Tag: 41510140")
+                               description="Department: ICT | Asset Tag: 91010140")
     # FakeRecord needs a .device attribute for the global serial check
     existing_item.device = parent
     inv_ep = FakeEndpoint([existing_item])
@@ -639,7 +639,7 @@ def test_suffix_match_camera_serial(monkeypatch):
     ae_sync.sync_assetexplorer()
     assert ep.create_calls == 0
     assert ep.updated[0]["id"] == 7
-    assert ep.updated[0]["asset_tag"] == "41510140"
+    assert ep.updated[0]["asset_tag"] == "91010140"
 
 
 def test_suffix_match_ambiguous_skips(monkeypatch, capsys):

@@ -146,7 +146,7 @@ def test_box_rules_cover_requested_prefixes_only():
     assert ae_sync._venture_assignment({"asset_tag": "3530"}) == ("Central", False)
     assert ae_sync._venture_assignment({"asset_tag": "4310"}) == ("Central", False)
     assert ae_sync._venture_assignment({"asset_tag": "4450"}) == ("Central", False)
-    assert ae_sync._venture_assignment({"asset_tag": "41510140"}) is None
+    assert ae_sync._venture_assignment({"asset_tag": "91010140"}) is None
     for tag in rejected_cases:
         assert ae_sync._venture_assignment({"asset_tag": tag}) is None, tag
 
@@ -155,7 +155,7 @@ def test_box_write_target_roles_include_camera_switch_ap():
     for product_type in ("CCTV", "Switch", "Access Point"):
         rec = _normalize(_box_asset_with_serial("SN123", product_type=product_type))
         assert ae_sync._is_venture_write_target(rec), product_type
-    rec = _normalize(_box_asset_with_serial("SN123", product_type="Firewall"))
+    rec = _normalize(_box_asset_with_serial("SN123", product_type="Firewall", tag="35300061"))
     assert not ae_sync._is_venture_write_target(rec)
 
 
@@ -207,6 +207,72 @@ def _nxp_asset_with_serial(serial):
                   org_serial_number=serial,
                   product_type={"internal_name": "CCTV"},
                   udf_fields={"udf_sline_901": "NXP"})
+
+
+def _new_rule_asset_with_serial(serial, tag, product_type, venture):
+    return _asset(id="9300", asset_tag=tag, name="NewRule", org_serial_number=serial,
+                  product_type={"internal_name": product_type},
+                  udf_fields={"udf_sline_901": venture})
+
+
+def test_new_venture_rules_cover_exact_requested_prefixes_and_values():
+    expected = {
+        "41400001": ("BOX", True),
+        "43150001": ("NXP", True), "44550001": ("NXP", True),
+        "43110001": ("CAB", True), "44510001": ("CAB", True),
+        "48510001": ("CAB", True), "41410001": ("CAB", True),
+        "41510001": ("CAB", True), "43140001": ("CAB", True),
+        "30910001": ("CAB", True),
+        # Existing rules must remain intact
+        "35350001": ("NXP", True), "35300001": ("BOX", True),
+        "35310001": ("CAB", True),
+    }
+    for tag, expected_rule in expected.items():
+        assert ae_sync._venture_assignment({"asset_tag": tag}) == expected_rule, tag
+    # Exact 4-digit prefixes remain Central, not the new 8-digit rule
+    for tag in ("4140", "4315", "4455", "4311", "4451"):
+        assert ae_sync._venture_assignment({"asset_tag": tag}) == ("Central", False), tag
+    for tag in ("4140001", "414000001", "4140000a", ""):
+        assert ae_sync._venture_assignment({"asset_tag": tag}) is None, tag
+
+
+def test_new_venture_rules_admit_router_nvr_firewall_roles(monkeypatch):
+    # New rules include product types present in ME for those prefixes.
+    for product_type in ("NVR", "Firewall", "Router"):
+        rec = _normalize(_new_rule_asset_with_serial("SN1", "41400001", product_type, "BOX"))
+        assert ae_sync._is_venture_write_target(rec), product_type
+    rec = _normalize(_new_rule_asset_with_serial("SN1", "42100001", "Server", None))
+    assert not ae_sync._is_venture_write_target(rec)
+
+
+def test_4140_box_overwrites_serial_matched_device_only(monkeypatch):
+    existing = FakeRecord(61, serial="4C0048DPAJ8F3C9", name="Sadeghiyeh-NVR-04",
+                          asset_tag="41400002", role="Storage",
+                          custom_fields={"venture": "Central", "nvr_ip": "172.31.4.7"})
+    ep = FakeEndpoint([existing])
+    _patch_helpers(monkeypatch, ep)
+    rec = _normalize(_new_rule_asset_with_serial("4C0048DPAJ8F3C9", "41400002", "NVR", "BOX"))
+    _patch_fetch(monkeypatch, [rec])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert len(ep.updated) == 1
+    cf = ep.updated[0]["custom_fields"]
+    assert cf["venture"] == "BOX"
+    assert cf["nvr_ip"] == "172.31.4.7"
+
+
+def test_nxp_cab_prefixes_idempotency_and_no_other_serial(monkeypatch):
+    matching = FakeRecord(62, serial="FS123", name="FS123", asset_tag="43150001",
+                          custom_fields={"ae_department": "ICT", "venture": "NXP"})
+    other = FakeRecord(63, serial="FS124", name="Other", asset_tag="43150001",
+                       custom_fields={"venture": "BOX"})
+    ep = FakeEndpoint([matching, other])
+    _patch_helpers(monkeypatch, ep)
+    rec = _normalize(_new_rule_asset_with_serial("FS123", "43150001", "CCTV", "NXP"))
+    _patch_fetch(monkeypatch, [rec])
+    ae_sync.sync_assetexplorer()
+    assert ep.create_calls == 0
+    assert ep.updated == [], ep.updated
 
 
 def test_nxp_rule_covers_exact_3535_prefixed_eight_digit_tags_only():
@@ -311,11 +377,12 @@ def test_targeted_cab_update_is_idempotent_when_already_correct(monkeypatch):
     assert ep.updated == [], ep.updated
     """NetBox already has a venture value -> AE must NOT overwrite it."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="41510140",
+                          asset_tag="91010140",
                           custom_fields={"venture": "East"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     _patch_fetch(monkeypatch, [_normalize(_asset(
+        asset_tag="91010140",
         udf_fields={"udf_sline_901": "Central"}))])
     ae_sync.sync_assetexplorer()
     # Other field updates are fine; the assertion is on venture only.
@@ -327,7 +394,7 @@ def test_targeted_cab_update_is_idempotent_when_already_correct(monkeypatch):
 def test_venture_absent_me_value_is_noop(monkeypatch):
     """ME has no venture (None) -> never writes a venture key."""
     existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
-                          asset_tag="41510140", custom_fields={})
+                          asset_tag="91010140", custom_fields={})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
     _patch_fetch(monkeypatch, [_normalize(_asset())])
@@ -344,7 +411,7 @@ def test_is_venture_write_target_playbook():
         ("1431", "Server", True),
         ("1431", "CCTV", True),
         ("2221", "Storage Device", True),
-        ("41510140", "Server", False),     # no Venture rule
+        ("91010140", "Server", False),     # no Venture rule
         ("1431", "Switch", False),         # Central stays original scope
         ("1431", "Access Point", False),
         ("35300061", "Switch", True),      # exact BOX prefix/type in scope

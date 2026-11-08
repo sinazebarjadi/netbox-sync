@@ -32,7 +32,17 @@ _VENTURE_VALUE = "Central"
 # requested, ME is authoritative for Venture only. Rule 1 preserves the old
 # fill-empty-only behaviour for all other Venture traffic.
 _VENTURE_RULES = (
+    {"prefix": "4140", "length": 8, "value": "BOX", "overwrite": True},
+    {"prefix": "4315", "length": 8, "value": "NXP", "overwrite": True},
+    {"prefix": "4455", "length": 8, "value": "NXP", "overwrite": True},
     {"prefix": "3535", "length": 8, "value": "NXP", "overwrite": True},
+    {"prefix": "4311", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "4451", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "4851", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "4141", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "4151", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "4314", "length": 8, "value": "CAB", "overwrite": True},
+    {"prefix": "3091", "length": 8, "value": "CAB", "overwrite": True},
     {"prefix": "3530", "length": 8, "value": "BOX", "overwrite": True},
     {"prefix": "4310", "length": 8, "value": "BOX", "overwrite": True},
     {"prefix": "4450", "length": 8, "value": "BOX", "overwrite": True},
@@ -68,7 +78,15 @@ def _is_venture_write_target(rec):
         return False
     if rule[0] == "Central":
         return rec.get("role") in {"Server", "Camera", "Storage"}
+    # New eight-digit rules cover the product types actually present in ME for
+    # those prefixes. Server/Storage/Extender records match by serial for sync.
+    tag = (rec.get("asset_tag") or "")
+    expanded_prefixes = {"4140", "4315", "4455", "4311", "4451", "4851", "4141", "4151", "4314", "3091"}
+    if rule[0] in {"BOX", "NXP", "CAB"} and rule[1] and any(tag.startswith(p) for p in expanded_prefixes):
+        return rec.get("role") in {"Server", "Camera", "Storage", "Switch", "Access Point",
+                                   "Router", "NVR", "Firewall", "Storage Device", "Extender"}
     return rec.get("role") in {"Camera", "Switch", "Access Point"}
+
 
 def _serial_suffix(s):
     """Trailing 9 alphanumeric chars, upper-cased — the physical hardware
