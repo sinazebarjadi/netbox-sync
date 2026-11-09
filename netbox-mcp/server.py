@@ -162,6 +162,186 @@ def netbox_device_power(device: str) -> str:
     }, indent=2)
 
 
+@mcp.tool()
+def netbox_list_vlans(site: str = "", status: str = "", limit: int = 100) -> str:
+    """List VLANs (VID, name, status, site, role, tenant, description). Optional
+    filters: site name, status (e.g. active), and a row limit."""
+    try:
+        vlans = nb.list_vlans(site=site or None, status=status or None,
+                              limit=min(max(limit, 1), 500))
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+    return json.dumps({"count": len(vlans), "vlans": [
+        {"id": v.get("id"), "vid": v.get("vid"), "name": v.get("name"),
+         "status": (v.get("status") or {}).get("value") if isinstance(v.get("status"), dict) else v.get("status"),
+         "site": (v.get("site") or {}).get("name"),
+         "role": (v.get("role") or {}).get("name"),
+         "tenant": (v.get("tenant") or {}).get("name"),
+         "description": v.get("description")}
+        for v in vlans]}, indent=2)
+
+
+@mcp.tool()
+def netbox_vlan_detail(vlan_id: int) -> str:
+    """Full record for a single VLAN by NetBox numeric ID."""
+    try:
+        v = nb.get_vlan(vlan_id)
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+    if not v:
+        return json.dumps({"found": False, "vlan_id": vlan_id})
+    return json.dumps({"found": True, "vlan": {
+        "id": v.get("id"), "vid": v.get("vid"), "name": v.get("name"),
+        "status": (v.get("status") or {}).get("value") if isinstance(v.get("status"), dict) else v.get("status"),
+        "site": (v.get("site") or {}).get("name"),
+        "role": (v.get("role") or {}).get("name"),
+        "tenant": (v.get("tenant") or {}).get("name"),
+        "description": v.get("description"),
+        "custom_fields": {k: val for k, val in (v.get("custom_fields") or {}).items()
+                          if val not in (None, "", False)},
+    }}, indent=2)
+
+
+@mcp.tool()
+def netbox_list_vrfs(limit: int = 100) -> str:
+    """List VRFs: name, route distinguisher (RD), tenant, description."""
+    try:
+        vrfs = nb.list_vrfs(limit=min(max(limit, 1), 500))
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+    return json.dumps({"count": len(vrfs), "vrfs": [
+        {"id": v.get("id"), "name": v.get("name"), "rd": v.get("rd"),
+         "tenant": (v.get("tenant") or {}).get("name"),
+         "enforce_unique": v.get("enforce_unique"),
+         "description": v.get("description")}
+        for v in vrfs]}, indent=2)
+
+
+@mcp.tool()
+def netbox_list_prefixes(vrf: str = "", vlan: int = 0, site: str = "",
+                         status: str = "", limit: int = 100) -> str:
+    """List IP prefixes with VRF, VLAN, site, role and status. Optional filters:
+    VRF name, VLAN VID, site name, status."""
+    try:
+        vlan_id = None
+        if vlan:
+            vl = nb.list_vlans(limit=500)
+            match = next((v for v in vl if v.get("vid") == vlan), None)
+            vlan_id = match.get("id") if match else None
+            if vlan_id is None:
+                return json.dumps({"count": 0, "prefixes": [],
+                                   "note": f"no VLAN with vid {vlan}"})
+        prefixes = nb.list_prefixes(vrf=vrf or None, vlan_id=vlan_id,
+                                    site=site or None, status=status or None,
+                                    limit=min(max(limit, 1), 500))
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+    return json.dumps({"count": len(prefixes), "prefixes": [
+        {"id": p.get("id"), "prefix": p.get("prefix"),
+         "status": (p.get("status") or {}).get("value") if isinstance(p.get("status"), dict) else p.get("status"),
+         "vrf": (p.get("vrf") or {}).get("name"),
+         "vlan": ({"vid": (p.get("vlan") or {}).get("vid"),
+                   "name": (p.get("vlan") or {}).get("name")}
+                  if p.get("vlan") else None),
+         "site": (p.get("site") or {}).get("name"),
+         "role": (p.get("role") or {}).get("name"),
+         "tenant": (p.get("tenant") or {}).get("name"),
+         "description": p.get("description")}
+        for p in prefixes]}, indent=2)
+
+
+@mcp.tool()
+def netbox_prefix_detail(prefix_id: int) -> str:
+    """Full record for a single prefix by NetBox numeric ID."""
+    try:
+        p = nb.get_prefix(prefix_id)
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+    if not p:
+        return json.dumps({"found": False, "prefix_id": prefix_id})
+    return json.dumps({"found": True, "prefix": {
+        "id": p.get("id"), "prefix": p.get("prefix"),
+        "status": (p.get("status") or {}).get("value") if isinstance(p.get("status"), dict) else p.get("status"),
+        "vrf": (p.get("vrf") or {}).get("name"),
+        "vlan": ({"vid": (p.get("vlan") or {}).get("vid"),
+                  "name": (p.get("vlan") or {}).get("name")} if p.get("vlan") else None),
+        "site": (p.get("site") or {}).get("name"),
+        "role": (p.get("role") or {}).get("name"),
+        "tenant": (p.get("tenant") or {}).get("name"),
+        "description": p.get("description"),
+        "custom_fields": {k: val for k, val in (p.get("custom_fields") or {}).items()
+                          if val not in (None, "", False)},
+    }}, indent=2)
+
+
+@mcp.tool()
+def netbox_list_cables(device: str = "", site: str = "", limit: int = 100) -> str:
+    """List cables with both termination endpoints. Optional filters: device
+    name and site name."""
+    try:
+        cables = nb.list_cables(device=device or None, site=site or None,
+                                limit=min(max(limit, 1), 500))
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+
+    def ends(c, key):
+        out = []
+        for t in (c.get(key) or []):
+            o = t.get("object") or {}
+            dev = o.get("device") or {}
+            out.append({"type": t.get("object_type"),
+                        "name": o.get("name"),
+                        "device": dev.get("name") if isinstance(dev, dict) else None})
+        return out
+
+    return json.dumps({"count": len(cables), "cables": [
+        {"id": c.get("id"),
+         "type": c.get("type"),
+         "status": (c.get("status") or {}).get("value") if isinstance(c.get("status"), dict) else c.get("status"),
+         "a_terminations": ends(c, "a_terminations"),
+         "b_terminations": ends(c, "b_terminations"),
+         "description": c.get("description"),
+         "length": c.get("length"), "length_unit": c.get("length_unit")}
+        for c in cables]}, indent=2)
+
+
+@mcp.tool()
+def netbox_interface_details(interface_id: int = 0, device: str = "",
+                             interface: str = "") -> str:
+    """Interface detail with assigned IP addresses. Resolve by numeric
+    interface_id, or by device + interface name."""
+    try:
+        iface = None
+        if interface_id:
+            iface = nb.get_interface(interface_id)
+        elif device and interface:
+            iface = nb.find_interface(device, interface)
+        else:
+            return json.dumps({"error": "provide interface_id or device+interface"})
+        if not iface:
+            return json.dumps({"found": False, "interface_id": interface_id,
+                               "device": device, "interface": interface})
+        ips = nb.list_interface_ips(iface["id"])
+    except Exception as e:
+        return json.dumps({"error": f"NetBox query failed: {e}"})
+    dev = iface.get("device") or {}
+    return json.dumps({"found": True, "interface": {
+        "id": iface.get("id"), "name": iface.get("name"),
+        "device": dev.get("name") if isinstance(dev, dict) else dev,
+        "type": (iface.get("type") or {}).get("value") if isinstance(iface.get("type"), dict) else iface.get("type"),
+        "enabled": iface.get("enabled"),
+        "mac_address": iface.get("mac_address"),
+        "mtu": iface.get("mtu"),
+        "mode": (iface.get("mode") or {}).get("value") if isinstance(iface.get("mode"), dict) else None,
+        "description": iface.get("description"),
+        "cable": (iface.get("cable") or {}).get("id") if isinstance(iface.get("cable"), dict) else None,
+    }, "ip_addresses": [
+        {"address": a.get("address"),
+         "status": (a.get("status") or {}).get("value") if isinstance(a.get("status"), dict) else a.get("status"),
+         "dns_name": a.get("dns_name"), "description": a.get("description")}
+        for a in ips]}, indent=2)
+
+
 def main():
     parser = argparse.ArgumentParser(description="NetBox read-only MCP server")
     parser.add_argument("--sse", action="store_true",

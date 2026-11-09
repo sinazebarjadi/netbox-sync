@@ -91,6 +91,26 @@ def search_devices(query, limit=10):
     return list(seen.values())[:limit]
 
 
+def _iter_get(path, params):
+    """Paginate GET results until NetBox reports no next page, or until the
+    requested row limit is reached (so 'list' tools never hang on huge feeds)."""
+    p = dict(params or {})
+    limit = int(p.pop('_max_rows', 0)) or 0
+    offset = p.pop('offset', 0)
+    count = 0
+    while True:
+        p['offset'] = offset
+        r = get(path, p)
+        for obj in r.get('results') or []:
+            count += 1
+            yield obj
+            if limit and count >= limit:
+                return
+        if not r.get('next'):
+            break
+        offset += len(r.get('results') or [])
+
+
 def _site_id(site):
     if not site:
         return None
@@ -170,6 +190,76 @@ def search_ip(address):
                 pass
             break
     return info
+
+
+def list_vlans(site=None, status=None, limit=200):
+    params = {'limit': min(max(limit, 1), 500)}
+    if site:
+        params['site__ic'] = site
+    if status:
+        params['status'] = status
+    return list(_iter_get('/api/ipam/vlans/', params))
+
+
+def get_vlan(vlan_id):
+    return get(f'/api/ipam/vlans/{vlan_id}/')
+
+
+def list_vrfs(limit=200):
+    return list(_iter_get('/api/ipam/vrfs/', {'limit': min(max(limit, 1), 500)}))
+
+
+def list_prefixes(vrf=None, vlan_id=None, site=None, status=None, limit=200):
+    params = {'limit': min(max(limit, 1), 500)}
+    if vrf:
+        params['vrf__name__ic'] = vrf
+    if vlan_id:
+        params['vlan_id'] = vlan_id
+    if site:
+        params['site__ic'] = site
+    if status:
+        params['status'] = status
+    return list(_iter_get('/api/ipam/prefixes/', params))
+
+
+def get_prefix(prefix_id):
+    return get(f'/api/ipam/prefixes/{prefix_id}/')
+
+
+def list_cables(device=None, site=None, limit=200):
+    params = {'limit': min(max(limit, 1), 500)}
+    if device:
+        dev = get_device(device)
+        if not dev:
+            return []
+        params['device_id'] = dev['id']
+    if site:
+        params['site__ic'] = site
+    params['_max_rows'] = min(max(limit, 1), 500)
+    return list(_iter_get('/api/dcim/cables/', params))
+
+
+def get_interface(interface_id):
+    return get(f'/api/dcim/interfaces/{interface_id}/')
+
+
+def find_interface(device, interface):
+    """Resolve an interface by device + interface name via GET only."""
+    dev = get_device(device)
+    if not dev:
+        return None
+    r = get('/api/dcim/interfaces/', {'device_id': dev['id'],
+                                      'name__ic': interface, 'limit': 10})
+    hits = r.get('results') or []
+    if not hits:
+        return None
+    exact = next((i for i in hits
+                  if (i.get('name') or '').lower() == interface.lower()), None)
+    return exact or hits[0]
+
+
+def list_interface_ips(interface_id):
+    return get('/api/ipam/ip-addresses/', {'interface_id': interface_id, 'limit': 100}).get('results', [])
 
 
 def get_device_power(device_id):
