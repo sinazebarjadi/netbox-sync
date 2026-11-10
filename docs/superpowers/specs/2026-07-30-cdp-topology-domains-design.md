@@ -8,7 +8,7 @@
 
 ## 1. Background (live evidence)
 
-- `BD1 (vtp=snapp)` and `BD2 (vtp=Snapp)` are the **same** domain split by case.
+- `BD1 (vtp=example)` and `BD2 (vtp=Example)` are the **same** domain split by case.
 - `BD4/BD5/BD6` hold three duplicates of `CCTV-MGMT` (vid 20) — per-switch fallback groups (empty VTP domain) for switches the user confirms are one shared L2 island.
 
 ## 2. Design
@@ -21,7 +21,7 @@
 **Component group key** (`_component_key`): first non-empty VTP domain in hostname-sorted member order, **casefolded**; else first sorted hostname. Isolated switch → VTP domain if set, else hostname (unchanged).
 
 **Migration (`_sweep_stale_groups`)** — a marker-owned group at a processed site is stale when:
-- its key case-folds to a key of a group fed this run but it isn't that group (case-variant duplicate, e.g. `Snapp`), or
+- its key case-folds to a key of a group fed this run but it isn't that group (case-variant duplicate, e.g. `Example`), or
 - its key is a processed switch's hostname that now resolves to a different (component) key (abandoned per-switch fallback).
 
 Stale groups: all their marked VLANs deleted, then the group itself deleted when empty. Manual groups never touched.

@@ -35,7 +35,7 @@
 ```python
 VTP_STATUS = """VTP Version capable             : 1 to 3
 VTP version running             : 3
-VTP Domain Name                 : snapp
+VTP Domain Name                 : example
 VTP Pruning Mode                : Disabled (Operationally Disabled)
 VTP Traps Generation            : Disabled
 Device ID                       : d009.c86a.fc80
@@ -54,7 +54,7 @@ VTP Operating Mode                : Transparent
 
 def test_parse_vtp_status_real_output():
     out = mod._parse_vtp_status(VTP_STATUS)
-    assert out["domain"] == "snapp"
+    assert out["domain"] == "example"
     assert out["mode"] == "client"   # Feature VLAN mode, not the MST one
 
 
@@ -155,7 +155,7 @@ Update `test_sweep_stale_vlans`: records get `group_id=8` instead of
 ```python
 def test_ensure_vlan_group_reuses_by_key_and_names_next_bd(monkeypatch):
     import netbox_sync.collectors.cisco as cisco
-    g1 = FakeRecord(60, name="BD1", description="netbox-sync: vtp=snapp",
+    g1 = FakeRecord(60, name="BD1", description="netbox-sync: vtp=example",
                     scope_type="dcim.site", scope_id=3)
     g2 = FakeRecord(61, name="BD3", description="netbox-sync: vtp=other",
                     scope_type="dcim.site", scope_id=3)
@@ -165,7 +165,7 @@ def test_ensure_vlan_group_reuses_by_key_and_names_next_bd(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
     # existing key -> reused, nothing created
-    assert cisco.ensure_vlan_group(3, "snapp") == 60
+    assert cisco.ensure_vlan_group(3, "example") == 60
     assert api.ipam.vlan_groups.created == []
 
     # new key -> created with next FREE BD number among marked groups (BD3+1)

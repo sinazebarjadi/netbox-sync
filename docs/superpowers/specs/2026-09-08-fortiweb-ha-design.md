@@ -6,7 +6,7 @@
 
 ---
 
-## 1. Verified facts (live, 2026-09-08, Afranet 192.168.19.130)
+## 1. Verified facts (live, 2026-09-08, ExampleISP 192.168.19.130)
 
 `GET /api/v2.0/system/status.systemstatus` on an HA node returns a `cluster_members` list:
 
@@ -14,8 +14,8 @@
 "cluster": "WAF-HA",
 "haStatus": "Active-Passive",
 "cluster_members": [
-  {"hostname": "FortiWeb-Afranet", "dev_sn": "FV-1KFS124000458", "role": "Primary"},
-  {"hostname": "FortiWeb",         "dev_sn": "FV-1KFS124000505", "role": "Secondary"}
+  {"hostname": "FortiWeb-ExampleISP", "dev_sn": "FV-1KFS124000XXX", "role": "Primary"},
+  {"hostname": "FortiWeb",         "dev_sn": "FV-1KFS124000YYY", "role": "Secondary"}
 ]
 ```
 

@@ -78,12 +78,12 @@ In `sync_fortigate_interfaces`, after each payload is built add:
 
 ```python
 def test_primary_ip_assigned_to_named_iface(monkeypatch):
-    dev = FakeRecord(7, name="FGT-DC-01", primary_ip4=None)
+    dev = FakeRecord(7, name="FW-DC-01", primary_ip4=None)
     svi = FakeRecord(70, name="MGMT54", device_id=7)
     api = _ipam_api([], dev, [svi])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    nbx.ensure_primary_ip(7, "192.0.2.70", "FGT-DC-01", iface_name="MGMT54")
+    nbx.ensure_primary_ip(7, "192.0.2.70", "FW-DC-01", iface_name="MGMT54")
 
     # no synthetic mgmt interface created; IP assigned to the named one
     assert api.dcim.interfaces.created == []

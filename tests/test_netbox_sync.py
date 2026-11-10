@@ -220,7 +220,7 @@ def test_sync_inventory_single_fetch_and_no_per_item_get(monkeypatch):
 # ── ensure_server_device blank-serial adoption (no duplicates) ───────────────
 
 def _server_probe(**over):
-    p = {"serial": "", "manufacturer": "HPE", "hostname": "Afra-Host-06",
+    p = {"serial": "", "manufacturer": "HPE", "hostname": "BR-Host-06",
          "ip": "192.168.19.43", "model": "ProLiant DL380 Gen9"}
     p.update(over)
     return p
@@ -251,9 +251,9 @@ def test_blank_serial_server_adopted_by_bmc_ip(monkeypatch):
 
 
 def test_blank_serial_server_adopted_by_name_any_site(monkeypatch):
-    """Site mapping drifted (Default vs Afranet): same name+role elsewhere is
+    """Site mapping drifted (Default vs ExampleISP): same name+role elsewhere is
     adopted instead of creating a duplicate."""
-    existing = FakeRecord(12, name="Afra-Host-06", role_id=7, site_id=99,
+    existing = FakeRecord(12, name="BR-Host-06", role_id=7, site_id=99,
                           serial="", custom_fields={"bmc_ip": "10.9.9.9"})
     ep = FakeEndpoint([existing])
     _patch_server_helpers(monkeypatch, ep)
@@ -267,9 +267,9 @@ def test_blank_serial_server_ambiguous_name_creates(monkeypatch):
     """Two different-site devices share the name and no BMC IP matches —
     ambiguous, so a new device is created rather than merging blindly."""
     ep = FakeEndpoint([
-        FakeRecord(13, name="Afra-Host-06", role_id=7, site_id=1,
+        FakeRecord(13, name="BR-Host-06", role_id=7, site_id=1,
                    serial="", custom_fields={"bmc_ip": "10.1.1.1"}),
-        FakeRecord(14, name="Afra-Host-06", role_id=7, site_id=2,
+        FakeRecord(14, name="BR-Host-06", role_id=7, site_id=2,
                    serial="", custom_fields={"bmc_ip": "10.2.2.2"}),
     ])
     _patch_server_helpers(monkeypatch, ep)
@@ -647,14 +647,14 @@ def test_ruckus_ha_map_parsing():
 
 
 SYSINFO = """System Overview:
-  Name= Ruckus-Controller_02
+  Name= WLC-Controller_02
   IP Address= 172.31.2.201
   IPv6 Address= fc00::2
   MAC Address= 38:45:3b:33:a9:40
   Uptime= 39d 5h 56m
   Model= ZD1200
   Licensed APs= 48
-  Serial Number= 352138000988
+  Serial Number= 352138000XXX
   Version= 10.5.1.0 build 276
 """
 
@@ -662,9 +662,9 @@ SYSINFO = """System Overview:
 def test_parse_sysinfo():
     import netbox_sync.collectors.ruckus as ruckus
     out = ruckus._parse_sysinfo(SYSINFO)
-    assert out == {"name": "Ruckus-Controller_02", "ip": "172.31.2.201",
+    assert out == {"name": "WLC-Controller_02", "ip": "172.31.2.201",
                    "mac": "38:45:3b:33:a9:40", "model": "ZD1200",
-                   "serial": "352138000988", "version": "10.5.1.0 build 276"}
+                   "serial": "352138000XXX", "version": "10.5.1.0 build 276"}
 
 
 AP_ALL = """AP:
@@ -771,18 +771,18 @@ def test_ensure_ap_device_creates_and_matches_by_mac(monkeypatch):
 
     ap = {"mac": "70:47:77:1b:a3:80", "model": "r550", "name": "F13-AP-W",
           "group": "F13", "ip": "172.31.2.214", "approved": True}
-    dev_id = nbx.ensure_ap_device(ap, "Ruckus-Controller_02")
+    dev_id = nbx.ensure_ap_device(ap, "WLC-Controller_02")
 
     payload = devices_ep.created[0]
     assert payload["name"] == "F13-AP-W"
     cf = payload["custom_fields"]
     assert cf["wap_mac"] == "70:47:77:1b:a3:80"
     assert cf["wap_group"] == "F13"
-    assert cf["wap_wlc"] == "Ruckus-Controller_02"
+    assert cf["wap_wlc"] == "WLC-Controller_02"
     assert cf["wap_enabled"] is True
 
     # second call with the same MAC -> updates, never duplicates
-    dev_id2 = nbx.ensure_ap_device(ap, "Ruckus-Controller_02")
+    dev_id2 = nbx.ensure_ap_device(ap, "WLC-Controller_02")
     assert dev_id2 == dev_id
     assert len(devices_ep.created) == 1
 
@@ -813,7 +813,7 @@ def test_ensure_ap_device_disambiguates_duplicate_names(monkeypatch):
 
     # a third same-named AP never adopts the first's device via name+site
     ap3 = {"mac": "b4:fb:e4:c3:99:99", "model": "U7PG2", "name": "F1",
-           "group": "Sharif", "ip": "192.168.236.19", "approved": True}
+           "group": "Site-Uni", "ip": "192.168.236.19", "approved": True}
     nbx.ensure_ap_device(ap3, "unifi-x", manufacturer="Ubiquiti")
     assert devices_ep.created[-1]["name"] == "F1 (9999)"
     assert devices_ep.created[-1]["custom_fields"]["wap_mac"] == ap3["mac"]
@@ -876,10 +876,10 @@ def test_sync_wireless_lans_creates_with_auth_map_and_vlan(monkeypatch):
              {"name": "CorpNet", "ssid": "CorpNet", "auth": "802.1x",
               "encryption": "wpa2", "vlan_id": 10}]
 
-    seen = nbx.sync_wireless_lans("Ruckus-Controller_02", wlans, {109: 500, 10: 501})
+    seen = nbx.sync_wireless_lans("WLC-Controller_02", wlans, {109: 500, 10: 501})
 
     groups = api.wireless.wireless_lan_groups.created
-    assert groups[0]["name"] == "ZD Ruckus-Controller_02"
+    assert groups[0]["name"] == "ZD WLC-Controller_02"
     by_ssid = {w["ssid"]: w for w in api.wireless.wireless_lans.created}
     assert by_ssid["Smart Plug"]["auth_type"] == "open"
     assert by_ssid["Smart Plug"]["vlan"] == 500
@@ -890,14 +890,14 @@ def test_sync_wireless_lans_creates_with_auth_map_and_vlan(monkeypatch):
 
 def test_sweep_wireless_lans(monkeypatch):
     stale = FakeRecord(50, ssid="OldNet",
-                       description="netbox-sync: Ruckus-Controller_02 OldNet")
+                       description="netbox-sync: WLC-Controller_02 OldNet")
     keep = FakeRecord(51, ssid="Smart Plug",
-                      description="netbox-sync: Ruckus-Controller_02 Smart Plug")
+                      description="netbox-sync: WLC-Controller_02 Smart Plug")
     manual = FakeRecord(52, ssid="ManualNet", description="manual")
     api = _wireless_api([stale, keep, manual])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    nbx.sweep_wireless_lans("Ruckus-Controller_02", {"Smart Plug"})
+    nbx.sweep_wireless_lans("WLC-Controller_02", {"Smart Plug"})
     assert api.wireless.wireless_lans.deleted_ids == [50]
 
 
@@ -910,7 +910,7 @@ UNIFI_STATUS = {"meta": {"rc": "ok", "up": True,
 
 UNIFI_SITES = {"meta": {"rc": "ok"}, "data": [
     {"name": "default", "desc": "Default", "_id": "588f25805bdbb3cf25db3fe1"},
-    {"name": "08r8os8i", "desc": "SnappPay", "_id": "62f73ef0567d3214303522d7"},
+    {"name": "08r8os8i", "desc": "ExamplePay", "_id": "62f73ef0567d3214303522d7"},
     {"name": "ressysr4", "desc": "HQ-General", "_id": "64d2169dff7ccc1690b5cea6"},
 ]}
 
@@ -951,7 +951,7 @@ def test_unifi_parse_sites_devices_wlans_networks():
     sites = unifi._parse_sites(UNIFI_SITES)
     assert sites == [
         {"name": "default", "desc": "Default"},
-        {"name": "08r8os8i", "desc": "SnappPay"},
+        {"name": "08r8os8i", "desc": "ExamplePay"},
         {"name": "ressysr4", "desc": "HQ-General"},
     ]
     aps = unifi._parse_devices(UNIFI_DEVICES)
@@ -993,14 +993,14 @@ def test_ensure_ruckus_device_cluster_and_secondary_preserves(monkeypatch):
     monkeypatch.setattr(nbx, "get_or_create_device_type", lambda *a, **k: 14)
     monkeypatch.setattr(nbx, "find_device", lambda *a, **k: None)
 
-    vip_probe = {"ip": "172.31.2.202", "serial": "352138000988",
-                 "model": "ZD1200", "hostname": "Ruckus-Controller_02",
+    vip_probe = {"ip": "172.31.2.202", "serial": "352138000XXX",
+                 "model": "ZD1200", "hostname": "WLC-Controller_02",
                  "reported_ip": "172.31.2.201", "mac": "38:45:3b:33:a9:40",
                  "manufacturer": "Ruckus", "firmware": "10.5.1.0 build 276"}
     dev_id = nbx.ensure_ruckus_device(vip_probe, "vip", "172.31.2.202")
     payload = devices_ep.created[0]
-    assert payload["name"] == "Ruckus-Controller_02"
-    assert payload["serial"] == "352138000988"
+    assert payload["name"] == "WLC-Controller_02"
+    assert payload["serial"] == "352138000XXX"
     assert payload["custom_fields"]["wlc_vip"] == "172.31.2.202"
     assert payload["custom_fields"]["wlc_ha_role"] == "vip"
 
@@ -1027,11 +1027,11 @@ def test_ensure_fortigate_device_creates(monkeypatch):
     monkeypatch.setattr(nbx, "find_device", lambda *a, **k: None)
 
     nbx.ensure_fortigate_device({
-        "ip": "192.0.2.70", "serial": "FGT60FTK21000001",
-        "model": "FortiGate 60F", "hostname": "FGT-DC-01",
+        "ip": "192.0.2.70", "serial": "FGT60FTK2100XXXX",
+        "model": "FortiGate 60F", "hostname": "FW-DC-01",
         "manufacturer": "Fortinet", "firmware": "v7.2.4"})
     payload = devices_ep.created[0]
-    assert payload["serial"] == "FGT60FTK21000001"
+    assert payload["serial"] == "FGT60FTK2100XXXX"
     assert payload["custom_fields"]["fortigate_ip"] == "192.0.2.70"
     assert payload["custom_fields"]["fortigate_enabled"] is True
 
@@ -1289,7 +1289,7 @@ def test_prefix_from_ip_and_iface_addr():
     import netbox_sync.ipam as ipam
     assert ipam._prefix_from_ip("172.31.2.1 255.255.255.0") == "172.31.2.0/24"
     assert ipam._prefix_from_ip("10.19.128.1 255.255.255.0") == "10.19.128.0/24"
-    assert ipam._prefix_from_ip("79.127.120.184 255.255.255.240") == "79.127.120.176/28"
+    assert ipam._prefix_from_ip("203.0.113.184 255.255.255.240") == "203.0.113.176/28"
     assert ipam._prefix_from_ip("0.0.0.0 0.0.0.0") is None
     assert ipam._prefix_from_ip("") is None
     assert ipam._prefix_from_ip(None) is None
@@ -1298,7 +1298,7 @@ def test_prefix_from_ip_and_iface_addr():
     assert ipam._iface_addr_with_prefixlen("0.0.0.0 0.0.0.0") == (None, None)
     assert ipam._iface_addr_with_prefixlen("") == (None, None)
     assert ipam._prefix_from_ip("10.19.128.1 255.255.255.0") == "10.19.128.0/24"
-    assert ipam._prefix_from_ip("79.127.120.184 255.255.255.240") == "79.127.120.176/28"
+    assert ipam._prefix_from_ip("203.0.113.184 255.255.255.240") == "203.0.113.176/28"
     assert ipam._prefix_from_ip("0.0.0.0 0.0.0.0") is None
     assert ipam._prefix_from_ip("") is None
     assert ipam._prefix_from_ip(None) is None
@@ -1320,7 +1320,7 @@ def test_ensure_prefix_create_refresh_and_manual(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
     # marked existing -> refreshed with scope+vlan
-    pid = ipam.ensure_prefix("10.0.0.0/24", 3, 110, "FGT-DC-01", "VLAN10")
+    pid = ipam.ensure_prefix("10.0.0.0/24", 3, 110, "FW-DC-01", "VLAN10")
     assert pid == 50
     assert {u["id"] for u in api.ipam.prefixes.updated} == {50}
     assert api.ipam.prefixes.updated[0]["vlan"] == 110
@@ -1328,12 +1328,12 @@ def test_ensure_prefix_create_refresh_and_manual(monkeypatch):
     assert api.ipam.prefixes.updated[0]["scope_type"] == "dcim.site"
 
     # manual existing -> reused untouched
-    pid = ipam.ensure_prefix("10.1.0.0/24", 3, 111, "FGT-DC-01", "VLAN11")
+    pid = ipam.ensure_prefix("10.1.0.0/24", 3, 111, "FW-DC-01", "VLAN11")
     assert pid == 51
     assert len(api.ipam.prefixes.updated) == 1   # no update for manual
 
     # missing -> created marked with scope+vlan
-    pid = ipam.ensure_prefix("10.2.0.0/24", 3, 112, "FGT-DC-01", "VLAN12")
+    pid = ipam.ensure_prefix("10.2.0.0/24", 3, 112, "FW-DC-01", "VLAN12")
     assert api.ipam.prefixes.created[0]["prefix"] == "10.2.0.0/24"
     assert api.ipam.prefixes.created[0]["scope_id"] == 3
     assert api.ipam.prefixes.created[0]["vlan"] == 112
@@ -1376,7 +1376,7 @@ def test_ensure_host_ip_create_with_mask_and_assignment(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
     ip_id = ipam.ensure_host_ip(7, "172.31.2.1/24", "MGMT54",
-                                "FGT-DC-01", "AP MGMT")
+                                "FW-DC-01", "AP MGMT")
 
     created = api.ipam.ip_addresses.created[0]
     assert created["address"] == "172.31.2.1/24"
@@ -1397,7 +1397,7 @@ def test_ensure_host_ip_reuses_existing(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
     ip_id = ipam.ensure_host_ip(7, "172.31.2.1/24", "MGMT54",
-                                "FGT-DC-01", "AP MGMT")
+                                "FW-DC-01", "AP MGMT")
     assert ip_id == 50
     assert api.ipam.ip_addresses.created == []
     assert api.ipam.ip_addresses.updated[0]["assigned_object_id"] == 70
@@ -1457,20 +1457,20 @@ def test_sync_nat_ips_vip_pool_and_sweep(monkeypatch):
     api = _host_ip_api([], [])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    vips = [{"name": "TimeKeeping-443", "extip": "77.104.83.164",
+    vips = [{"name": "ServiceA-443", "extip": "203.0.113.164",
              "extport": 443, "mappedip": ["172.31.5.53"], "mappedport": 443,
              "protocol": "tcp", "portforward": "enable", "status": "enable"}]
-    pools = [{"name": "79.127.120.186", "type": "overload",
-              "startip": "79.127.120.186", "endip": "79.127.120.186"}]
+    pools = [{"name": "203.0.113.186", "type": "overload",
+              "startip": "203.0.113.186", "endip": "203.0.113.186"}]
     ipam.sync_nat_ips(vips, pools)
 
     by_addr = {r.address.split("/")[0]: r for r in api.ipam.ip_addresses.items}
-    ext = by_addr["77.104.83.164"]
+    ext = by_addr["203.0.113.164"]
     inside = by_addr["172.31.5.53"]
     assert ext.nat_inside == inside.id
-    assert "TimeKeeping-443" in ext.description
+    assert "ServiceA-443" in ext.description
     assert "nat inside" in inside.description
-    assert "79.127.120.186" in by_addr
+    assert "203.0.113.186" in by_addr
 
     # sweep: stale marked NAT IPs removed, manual kept
     manual = FakeRecord(99, address="9.9.9.9", device_id=7, description="manual")
@@ -1479,7 +1479,7 @@ def test_sync_nat_ips_vip_pool_and_sweep(monkeypatch):
     for r in (manual, stale):
         r._endpoint = api.ipam.ip_addresses
     api.ipam.ip_addresses.items.extend([manual, stale])
-    ipam.sweep_nat_ips({"77.104.83.164", "172.31.5.53", "79.127.120.186"})
+    ipam.sweep_nat_ips({"203.0.113.164", "172.31.5.53", "203.0.113.186"})
     assert 98 in api.ipam.ip_addresses.deleted_ids
     assert 99 not in api.ipam.ip_addresses.deleted_ids
 
@@ -1493,29 +1493,29 @@ def _services_api(service_items, ip_items=None):
 
 def test_sync_nat_services_per_vip(monkeypatch):
     import netbox_sync.ipam as ipam
-    ext_ip = FakeRecord(50, address="77.104.83.164/32")
+    ext_ip = FakeRecord(50, address="203.0.113.164/32")
     api = _services_api([], [ext_ip])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
     vips = [
-        {"name": "TimeKeeping-443", "extip": "77.104.83.164", "extport": 443,
+        {"name": "ServiceA-443", "extip": "203.0.113.164", "extport": 443,
          "mappedip": ["172.31.5.53"], "mappedport": 443, "protocol": "tcp",
          "portforward": "enable", "status": "enable"},
-        {"name": "Avid App-7625", "extip": "77.104.83.164", "extport": 7625,
+        {"name": "ServiceB-7625", "extip": "203.0.113.164", "extport": 7625,
          "mappedip": ["172.31.5.60"], "mappedport": 7625, "protocol": "tcp",
          "portforward": "enable", "status": "enable"},
     ]
     seen = ipam.sync_nat_services(7, vips)
 
     created = {s["name"]: s for s in api.ipam.services.created}
-    assert set(created) == {"TimeKeeping-443", "Avid App-7625"}
-    s1 = created["TimeKeeping-443"]
+    assert set(created) == {"ServiceA-443", "ServiceB-7625"}
+    s1 = created["ServiceA-443"]
     assert s1["protocol"] == "tcp"
     assert s1["ports"] == [443]
     assert s1["ipaddresses"] == [50]
     assert "172.31.5.53" in s1["description"]
-    assert created["Avid App-7625"]["ipaddresses"] == [50]   # shared extip -> separate services
-    assert seen == {"TimeKeeping-443", "Avid App-7625"}
+    assert created["ServiceB-7625"]["ipaddresses"] == [50]   # shared extip -> separate services
+    assert seen == {"ServiceA-443", "ServiceB-7625"}
 
 
 def test_svc_ports_parsing():
@@ -1530,19 +1530,19 @@ def test_sweep_nat_services(monkeypatch):
     import netbox_sync.ipam as ipam
     stale = FakeRecord(60, name="OLD-SVC", device_id=7,
                        description="netbox-sync: nat OLD-SVC")
-    keep = FakeRecord(61, name="TimeKeeping-443", device_id=7,
-                      description="netbox-sync: nat TimeKeeping-443")
+    keep = FakeRecord(61, name="ServiceA-443", device_id=7,
+                      description="netbox-sync: nat ServiceA-443")
     manual = FakeRecord(62, name="my-svc", device_id=7, description="manual")
     api = _services_api([stale, keep, manual])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    ipam.sweep_nat_services(7, {"TimeKeeping-443"})
+    ipam.sweep_nat_services(7, {"ServiceA-443"})
     assert api.ipam.services.deleted_ids == [60]
 
 
 def test_site_vlan_index(monkeypatch):
     import netbox_sync.collectors.cisco as cisco
-    g = FakeRecord(8, name="BD1", description="netbox-sync: vtp=snapp",
+    g = FakeRecord(8, name="BD1", description="netbox-sync: vtp=example",
                     scope_type="dcim.site", scope_id=3)
     manual_g = FakeRecord(9, name="X", description="manual",
                           scope_type="dcim.site", scope_id=3)
@@ -1781,11 +1781,11 @@ def test_primary_ip_created_assigned_and_set(monkeypatch):
     api = _ipam_api([], dev)
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    ip_id = nbx.ensure_primary_ip(7, "172.31.1.103", "F10-SW-W-02")
+    ip_id = nbx.ensure_primary_ip(7, "172.31.1.103", "SW-BRANCH-02")
 
     created = api.ipam.ip_addresses.created[0]
     assert created["address"] == "172.31.1.103/24"
-    assert created["dns_name"] == "f10-sw-w-02"
+    assert created["dns_name"] == "sw-branch-02"
     assert created["description"] == "netbox-sync: mgmt"
 
     # mgmt interface created on the device
@@ -1852,12 +1852,12 @@ def test_primary_ip_no_write_when_already_correct(monkeypatch):
 
 
 def test_primary_ip_assigned_to_named_iface(monkeypatch):
-    dev = FakeRecord(7, name="FGT-DC-01", primary_ip4=None)
+    dev = FakeRecord(7, name="FW-DC-01", primary_ip4=None)
     svi = FakeRecord(70, name="MGMT54", device_id=7)
     api = _ipam_api([], dev, [svi])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    nbx.ensure_primary_ip(7, "192.0.2.70", "FGT-DC-01", iface_name="MGMT54")
+    nbx.ensure_primary_ip(7, "192.0.2.70", "FW-DC-01", iface_name="MGMT54")
 
     # no synthetic mgmt interface created; IP assigned to the named one
     assert api.dcim.interfaces.created == []
@@ -1967,7 +1967,7 @@ def test_sweep_stale_vlans(monkeypatch):
 
 def test_ensure_vlan_group_reuses_by_key_and_names_next_bd(monkeypatch):
     import netbox_sync.collectors.cisco as cisco
-    g1 = FakeRecord(60, name="BD1", description="netbox-sync: vtp=snapp",
+    g1 = FakeRecord(60, name="BD1", description="netbox-sync: vtp=example",
                     scope_type="dcim.site", scope_id=3)
     g2 = FakeRecord(61, name="BD3", description="netbox-sync: vtp=other",
                     scope_type="dcim.site", scope_id=3)
@@ -1977,7 +1977,7 @@ def test_ensure_vlan_group_reuses_by_key_and_names_next_bd(monkeypatch):
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
     # existing key -> reused, nothing created
-    assert cisco.ensure_vlan_group(3, "snapp") == 60
+    assert cisco.ensure_vlan_group(3, "example") == 60
     assert api.ipam.vlan_groups.created == []
 
     # new key -> created with next FREE BD number among marked groups (BD3+1)
@@ -2011,11 +2011,11 @@ def test_sweep_stale_groups_migration(monkeypatch):
     """Stale marked groups (case-variant duplicate, abandoned hostname
     fallback) are emptied and deleted; fed groups and manual groups stay."""
     import netbox_sync.collectors.cisco as cisco
-    g_snapp   = FakeRecord(1, name="BD1", description="netbox-sync: vtp=snapp",
+    g_example   = FakeRecord(1, name="BD1", description="netbox-sync: vtp=example",
                            scope_type="dcim.site", scope_id=3)
-    g_SNAPP   = FakeRecord(2, name="BD2", description="netbox-sync: vtp=Snapp",
+    g_EXAMPLE = FakeRecord(2, name="BD2", description="netbox-sync: vtp=Example",
                            scope_type="dcim.site", scope_id=3)
-    g_fb      = FakeRecord(4, name="BD4", description="netbox-sync: vtp=f12-cctv-sw-02",
+    g_fb      = FakeRecord(4, name="BD4", description="netbox-sync: vtp=f12-edge-sw-02",
                            scope_type="dcim.site", scope_id=3)
     manual_g  = FakeRecord(9, name="X", description="manual group",
                            scope_type="dcim.site", scope_id=3)
@@ -2025,13 +2025,13 @@ def test_sweep_stale_groups_migration(monkeypatch):
         FakeRecord(52, vid=20,  group_id=4, description="netbox-sync: x"),
         FakeRecord(53, vid=999, group_id=9, description="manual vlan"),
     ]
-    api = _vlan_api(vlans, [g_snapp, g_SNAPP, g_fb, manual_g])
+    api = _vlan_api(vlans, [g_example, g_EXAMPLE, g_fb, manual_g])
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    # BD1(snapp) is fed this run; f12-cctv-sw-02 moved to a component group
+    # BD1(example) is fed this run; f12-edge-sw-02 moved to a component group
     cisco._sweep_stale_groups(
         3, fed_group_ids={1},
-        key_by_name={"f12-cctv-sw-02": "f_-1-cctv-sw"})
+        key_by_name={"f12-edge-sw-02": "f_-1-edge-sw"})
 
     # BD2 (case-variant) and BD4 (abandoned fallback) lost their VLANs,
     # then were deleted themselves; BD1 and the manual group untouched

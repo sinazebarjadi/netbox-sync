@@ -65,11 +65,11 @@ def test_primary_ip_created_with_range_mask(monkeypatch):
     api = _ipam_api([], dev)
     monkeypatch.setattr(nbx, "get_netbox", lambda: api)
 
-    ip_id = nbx.ensure_primary_ip(7, "172.31.1.103", "F10-SW-W-02")
+    ip_id = nbx.ensure_primary_ip(7, "172.31.1.103", "SW-BRANCH-02")
 
     created = api.ipam.ip_addresses.created[0]
     assert created["address"] == "172.31.1.103/24"
-    assert created["dns_name"] == "f10-sw-w-02"
+    assert created["dns_name"] == "sw-branch-02"
     assert created["description"] == "netbox-sync: mgmt"
     assert created["status"] == "active"
     assert {u["id"] for u in api.dcim.devices.updated} == {7}

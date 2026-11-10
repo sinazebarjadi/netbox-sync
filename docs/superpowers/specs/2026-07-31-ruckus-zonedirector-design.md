@@ -9,7 +9,7 @@
 ## 1. Verified facts (live probes, 2026-07-31)
 
 - Transport: paramiko **interactive shell** required — ZD rejects `exec_command` ("Invalid argument"); login is two-step inside the shell: `Please login:` → user → `Password:` → pass → welcome; privileged commands need `enable` (no password) → `ruckus#`.
-- `show sysinfo` gives: Name (`Ruckus-Controller_02`), IP Address (`172.31.2.201`), MAC, Model (`ZD1200`), Licensed APs, **Serial Number** (`352138000988`), **Version** (`10.5.1.0 build 276`), AP counts.
+- `show sysinfo` gives: Name (`WLC-Controller_02`), IP Address (`172.31.2.201`), MAC, Model (`ZD1200`), Licensed APs, **Serial Number** (`352138000XXX`), **Version** (`10.5.1.0 build 276`), AP counts.
 - `show ap all`: ID blocks with MAC Address, Model (`r550`), Device Name, Approved, Group Name, Network Setting → IP Address / Netmask / Gateway (36 APs live).
 - `show wlan all`: ID blocks with NAME, SSID, Authentication (`open`), Encryption (`wpa2`), **VLAN-ID** (`109`) (15 WLANs live; passphrases visible in CLI — **never synced**).
 - No device-side redundancy command exists on this firmware; HA topology comes from config: VIP `172.31.2.202`, primary `.201`, secondary `.200` (user-provided).

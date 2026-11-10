@@ -10,7 +10,7 @@ import netbox_sync.netbox as nbx
 # ── live-captured fixtures (FMC 7.x, 2026-09-09) ────────────────────────────
 
 DEVICE_DETAIL = {
-    "name": "HQ-FTD-01",
+    "name": "HQ-FW-01",
     "model": "Cisco Secure Firewall 3110 Threat Defense",
     "sw_version": "7.6.4",
     "hostName": "172.31.250.200",
@@ -18,23 +18,23 @@ DEVICE_DETAIL = {
     "ftdMode": "ROUTED",
     "isConnected": True,
     "deviceGroup": {"name": "HQ"},
-    "metadata": {"deviceSerialNumber": "FJZ2909JHFH"},
+    "metadata": {"deviceSerialNumber": "FJZ2909XXXX"},
 }
 
 DEVICE_DETAIL_NO_SERIAL = {
-    "name": "Afra-FTD-02", "model": "Cisco Secure Firewall 3110 Threat Defense",
+    "name": "BR-FTD-02", "model": "Cisco Secure Firewall 3110 Threat Defense",
     "sw_version": "7.6.4", "hostName": "192.168.19.3",
     "healthStatus": "green", "ftdMode": "ROUTED", "isConnected": True,
-    "deviceGroup": {"name": "Afra"}, "metadata": {},
+    "deviceGroup": {"name": "Branch"}, "metadata": {},
 }
 
 
 def test_parse_device_detail():
     out = ftd._parse_device_detail(DEVICE_DETAIL)
     assert out == {
-        "name": "HQ-FTD-01",
+        "name": "HQ-FW-01",
         "model": "Cisco Secure Firewall 3110 Threat Defense",
-        "serial": "FJZ2909JHFH",
+        "serial": "FJZ2909XXXX",
         "mgmt_ip": "172.31.250.200",
         "sw_version": "7.6.4",
         "health": "green",
@@ -48,7 +48,7 @@ def test_parse_device_detail_missing_serial():
     out = ftd._parse_device_detail(DEVICE_DETAIL_NO_SERIAL)
     assert out["serial"] is None
     assert out["mgmt_ip"] == "192.168.19.3"
-    assert out["group"] == "Afra"
+    assert out["group"] == "Branch"
 
 
 def test_session_login_and_get(monkeypatch):
@@ -109,15 +109,15 @@ def _ftd_setup(monkeypatch):
 
 def test_ensure_ftd_creates_and_matches_by_serial(monkeypatch):
     devices_ep = _ftd_setup(monkeypatch)
-    ftd_rec = {"name": "HQ-FTD-01", "model": "Cisco Secure Firewall 3110 Threat Defense",
-               "serial": "FJZ2909JHFH", "mgmt_ip": "172.31.250.200",
+    ftd_rec = {"name": "HQ-FW-01", "model": "Cisco Secure Firewall 3110 Threat Defense",
+               "serial": "FJZ2909XXXX", "mgmt_ip": "172.31.250.200",
                "sw_version": "7.6.4", "health": "green", "mode": "ROUTED",
                "group": "HQ", "connected": True}
     dev_id = nbx.ensure_ftd_device(ftd_rec, fmc_ip="192.168.16.143")
 
     payload = devices_ep.created[0]
-    assert payload["name"] == "HQ-FTD-01"
-    assert payload["serial"] == "FJZ2909JHFH"
+    assert payload["name"] == "HQ-FW-01"
+    assert payload["serial"] == "FJZ2909XXXX"
     cf = payload["custom_fields"]
     assert cf["ftd_ip"] == "172.31.250.200"
     assert cf["ftd_enabled"] is True
@@ -136,15 +136,15 @@ def test_ensure_ftd_creates_and_matches_by_serial(monkeypatch):
 def test_ensure_ftd_adopts_ae_record_by_serial(monkeypatch):
     from tests.test_netbox_sync import FakeRecord
     devices_ep = _ftd_setup(monkeypatch)
-    existing = FakeRecord(50, name="HQ-FTD-01", serial="FJZ2909JHFH",
+    existing = FakeRecord(50, name="HQ-FW-01", serial="FJZ2909XXXX",
                           site_id=13, role_id=99,
                           role=SimpleNamespace(id=99, name="Firewall"),
                           custom_fields={"ae_asset_id": "7"})
     devices_ep.items.append(existing)
     existing._endpoint = devices_ep
 
-    ftd_rec = {"name": "HQ-FTD-01", "model": "Cisco Secure Firewall 3110 Threat Defense",
-               "serial": "FJZ2909JHFH", "mgmt_ip": "172.31.250.200",
+    ftd_rec = {"name": "HQ-FW-01", "model": "Cisco Secure Firewall 3110 Threat Defense",
+               "serial": "FJZ2909XXXX", "mgmt_ip": "172.31.250.200",
                "sw_version": "7.6.4", "health": "green", "mode": "ROUTED",
                "group": "HQ", "connected": True}
     dev_id = nbx.ensure_ftd_device(ftd_rec, fmc_ip="192.168.16.143")
@@ -155,10 +155,10 @@ def test_ensure_ftd_adopts_ae_record_by_serial(monkeypatch):
 
 def test_mark_ftd_offline(monkeypatch):
     from tests.test_netbox_sync import FakeRecord, FakeEndpoint
-    dev = FakeRecord(9, name="HQ-FTD-01", custom_fields={"ftd_enabled": True})
+    dev = FakeRecord(9, name="HQ-FW-01", custom_fields={"ftd_enabled": True})
     devices_ep = FakeEndpoint([dev])
     monkeypatch.setattr(nbx, "get_netbox",
                         lambda: SimpleNamespace(dcim=SimpleNamespace(devices=devices_ep)))
-    nbx.mark_ftd_offline(9, "HQ-FTD-01")
+    nbx.mark_ftd_offline(9, "HQ-FW-01")
     assert devices_ep.updated[0]["status"] == "offline"
     assert devices_ep.updated[0]["custom_fields"]["ftd_enabled"] is False

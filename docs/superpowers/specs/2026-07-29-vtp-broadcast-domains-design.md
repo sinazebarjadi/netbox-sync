@@ -10,7 +10,7 @@
 
 | Question | Decision |
 |----------|----------|
-| Domain identification | `show vtp status` → VTP domain name (verified live: `snapp` on the user's C9200L) |
+| Domain identification | `show vtp status` → VTP domain name (verified live: `example` on the user's C9200L) |
 | Fallback when VTP domain empty | Per-switch group keyed by hostname (unknowns never merge) |
 | Group naming | **Always BD1, BD2…** per site, stable across runs via marker-description key lookup |
 | Identity key | Group description `netbox-sync: vtp=<key>` |

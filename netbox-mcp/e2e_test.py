@@ -29,7 +29,7 @@ async def main():
             names = [t.name for t in tools.tools]
             print("TOOLS:", names)
 
-            for ident in ["AFRA-HOST-10", "CZJ2470YCC", "192.168.19.47"]:
+            for ident in ["BR-HOST-10", "CZJ2470XXX", "192.168.19.47"]:
                 r = await session.call_tool("netbox_get_device", {"identifier": ident})
                 d = json.loads(r.content[0].text)
                 dev = d.get("device") or {}
@@ -37,11 +37,11 @@ async def main():
                       f"name={dev.get('name')!r} serial={dev.get('serial')!r} "
                       f"rack={dev.get('rack')!r} U={dev.get('position')}")
 
-            r = await session.call_tool("netbox_rack_inventory", {"rack_name": "R16", "site": "Afranet"})
+            r = await session.call_tool("netbox_rack_inventory", {"rack_name": "R16", "site": "ExampleISP"})
             d = json.loads(r.content[0].text)
             print(f"rack_inventory(R16): found={d.get('found')} devices={len(d.get('devices', []))}")
 
-            r = await session.call_tool("netbox_device_power", {"device": "Afra-Host-10.snapp.net"})
+            r = await session.call_tool("netbox_device_power", {"device": "BR-Host-10.example.net"})
             d = json.loads(r.content[0].text)
             print(f"device_power: {d.get('power_ports')}")
 

@@ -13,7 +13,7 @@
 - **Devices** (`/api/s/<site>/stat/device`): `mac`, `name`, `model` (`U7PG2`), `serial` (MAC without colons), `ip`, `version` (firmware), `state`, `adopted`, `site_id`, `uptime`, `hw_caps`, `board_rev`.
 - **WLANs** (`/api/s/<site>/rest/wlanconf`): `name`, `security`, `wpa_mode`, `wpa_enc`, `pmf_mode`, `enabled`, `hide_ssid`, `is_guest`, `networkconf_id`, `site_id`, `wlan_band(s)`, `minrate`, `dtim`.
 - **Networks** (`/api/s/<site>/rest/networkconf`): LAN/VLAN configs with `vlan` ids (for WLAN→VLAN linkage).
-- **Sites** (`/api/self/sites` and `/api/stat/sites`): `name`, `desc` (human names: SnappPay, Sadeghiyeh, Sharif, HQ-Server Room, HQ-F6, HQ-General, Cities-* …).
+- **Sites** (`/api/self/sites` and `/api/stat/sites`): `name`, `desc` (human names: ExamplePay, Site-West, Site-Uni, HQ-Server Room, HQ-F6, HQ-General, Cities-* …).
 
 ## 2. Design
 

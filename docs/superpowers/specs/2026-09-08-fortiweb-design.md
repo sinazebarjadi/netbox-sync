@@ -12,8 +12,8 @@ Two appliances, both answering the FortiWeb REST API:
 
 | IP | hostName | serialNumber | model | firmware | operationMode | haStatus | ifaces |
 |----|----------|--------------|-------|----------|---------------|----------|--------|
-| 192.168.60.252 | `FortiWeb-Azadegan` | FV-1KET122900020 | 1000E | 7.2.12 build0437 | Reverse Proxy | Standalone | 17 |
-| 192.168.19.130 | *(unset)* | FV-1KFS124000458 | 1000F | 7.2.12 build0437 | Reverse Proxy | Active-Passive | 20 |
+| 192.168.60.252 | `FortiWeb-ExampleDC` | FV-1KET122900XXX | 1000E | 7.2.12 build0437 | Reverse Proxy | Standalone | 17 |
+| 192.168.19.130 | *(unset)* | FV-1KFS124000XXX | 1000F | 7.2.12 build0437 | Reverse Proxy | Active-Passive | 20 |
 
 **Auth (per Fortinet KB, confirmed):** FortiWeb has **no dedicated API users**. Every request carries an `Authorization` header = **Base64 of `{"username","password","vdom":"root"}`**. No session, no cookie, no token endpoint. Works with the existing readonly account.
 

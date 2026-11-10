@@ -29,5 +29,6 @@ netbox-sync.lock
 
 # Audit artifacts — never commit
 netbox_duplicate_audit_*.xlsx
+me_duplicate_asset_tags.xlsx
 me_set_venture.py
 

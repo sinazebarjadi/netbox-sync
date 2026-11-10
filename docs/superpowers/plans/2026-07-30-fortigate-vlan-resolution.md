@@ -34,15 +34,15 @@
 IFCONFIG_A = """AP MGMT\tLink encap:Ethernet  HWaddr 00:09:0F:09:00:24
 \tinet addr:172.31.2.1  Bcast:172.31.2.255  Mask:255.255.255.0
 
-AsiaTech\tLink encap:Ethernet  HWaddr 00:09:0F:09:00:26
-\tinet addr:79.127.120.184  Bcast:79.127.120.191  Mask:255.255.255.240
+PartnerNet\tLink encap:Ethernet  HWaddr 00:09:0F:09:00:26
+\tinet addr:203.0.113.184  Bcast:203.0.113.191  Mask:255.255.255.240
 """
 
 
 def test_parse_ifconfig_a():
     out = mod._parse_ifconfig_a(IFCONFIG_A)
     assert out == {"AP MGMT": "00:09:0f:09:00:24",
-                   "AsiaTech": "00:09:0f:09:00:26"}
+                   "PartnerNet": "00:09:0f:09:00:26"}
 ```
 
 `tests/test_cisco_parsers.py`:
@@ -156,7 +156,7 @@ def _cisco_mac_lookup(ip, cisco_mac):
 ```python
 def test_site_vlan_index(monkeypatch):
     import netbox_sync.collectors.cisco as cisco
-    g = FakeRecord(8, name="BD1", description="netbox-sync: vtp=snapp",
+    g = FakeRecord(8, name="BD1", description="netbox-sync: vtp=example",
                    scope_type="dcim.site", scope_id=3)
     manual_g = FakeRecord(9, name="X", description="manual",
                           scope_type="dcim.site", scope_id=3)

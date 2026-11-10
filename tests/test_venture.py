@@ -39,7 +39,7 @@ def test_venture_passed_through_on_new_device_payload(monkeypatch):
 
 def test_venture_enrichment_uses_me_value_not_tag(monkeypatch):
     """Venture fills empty only and preserves every other custom field."""
-    existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
+    existing = FakeRecord(9, serial="6CU8474XXX", name="srv-real",
                           asset_tag="35310054",
                           custom_fields={"cam_nvr": "HQ-NVR-01", "bmc_ip": "10.0.0.1"})
     ep = FakeEndpoint([existing])
@@ -59,7 +59,7 @@ def test_venture_enrichment_uses_me_value_not_tag(monkeypatch):
 
 def test_venture_existing_value_preserved_when_me_changes(monkeypatch):
     """Same as Department: ME enriches an empty field, never overwrites."""
-    existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
+    existing = FakeRecord(9, serial="6CU8474XXX", name="srv-real",
                           asset_tag="35310054", custom_fields={"venture": "Central"})
     ep = FakeEndpoint([existing])
     _patch_helpers(monkeypatch, ep)
@@ -73,7 +73,7 @@ def test_venture_existing_value_preserved_when_me_changes(monkeypatch):
 
 def test_blank_me_venture_does_not_write_venture(monkeypatch):
     for udf in ({}, {"udf_sline_901": None}, {"udf_sline_901": ""}, {"udf_sline_901": "   "}):
-        existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
+        existing = FakeRecord(9, serial="6CU8474XXX", name="srv-real",
                               asset_tag="91010140", custom_fields={})
         ep = FakeEndpoint([existing])
         _patch_helpers(monkeypatch, ep)
@@ -85,7 +85,7 @@ def test_blank_me_venture_does_not_write_venture(monkeypatch):
 
 
 def test_existing_venture_idempotent(monkeypatch):
-    existing = FakeRecord(9, serial="6CU8474FTV", name="srv-real",
+    existing = FakeRecord(9, serial="6CU8474XXX", name="srv-real",
                           asset_tag="91010140",
                           custom_fields={"ae_department": "ICT", "venture": "CAB"})
     ep = FakeEndpoint([existing])

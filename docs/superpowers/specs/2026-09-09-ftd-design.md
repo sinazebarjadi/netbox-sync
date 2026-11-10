@@ -16,17 +16,17 @@
 - `model`: "Cisco Secure Firewall 3110 Threat Defense"
 - `sw_version`: "7.6.4"
 - `hostName`: the FTD's **management IP** (e.g. `172.31.250.200`)
-- `metadata.deviceSerialNumber`: the **chassis serial** (e.g. `FJZ2909JHFH`)
-- `healthStatus` (green), `ftdMode` (ROUTED), `isConnected` (true), `deviceGroup.name` (HQ/Afra)
+- `metadata.deviceSerialNumber`: the **chassis serial** (e.g. `FJZ2909XXXX`)
+- `healthStatus` (green), `ftdMode` (ROUTED), `isConnected` (true), `deviceGroup.name` (HQ/Branch)
 
 The 4 FTDs (two HA pairs, but **each has its own distinct mgmt IP** — FTD HA does NOT share a mgmt IP like FortiWeb/FortiGate):
 
 | Name | Mgmt IP | Serial | Group |
 |------|---------|--------|-------|
-| HQ-FTD-01 | 172.31.250.200 | FJZ2909JHFH | HQ |
-| HQ-FTD-02 | 172.31.250.201 | FJZ2914026S | HQ |
-| Afra-FTD-01 | 192.168.19.2 | FJZ2909EL9L | Afra |
-| Afra-FTD-02 | 192.168.19.3 | FJZ29090AWW | Afra |
+| HQ-FW-01 | 172.31.250.200 | FJZ2909XXXX | HQ |
+| HQ-FW-02 | 172.31.250.201 | FJZ2914XXX | HQ |
+| BR-FTD-01 | 192.168.19.2 | FJZ2909YYY | Branch |
+| BR-FTD-02 | 192.168.19.3 | FJZ2909ZZZ | Branch |
 
 ## 2. Design
 
@@ -39,7 +39,7 @@ The 4 FTDs (two HA pairs, but **each has its own distinct mgmt IP** — FTD HA d
 - `ensure_ftd_device(ftd)`: match by chassis serial (`metadata.deviceSerialNumber`), else name+site+role. Role `FTD` (new). Custom fields `ftd_ip` (the FTD's mgmt IP), `ftd_enabled`, `ftd_model`, `ftd_firmware`, `ftd_health`, `ftd_mode`, `ftd_group`, `ftd_fmc` (the managing FMC IP). Manufacturer `Cisco`.
 - **Each FTD is its own device with its own mgmt IP** (no shared-IP/VRF needed — FTD HA keeps separate mgmt IPs). Primary IPv4 = the FTD's `hostName` (mgmt IP) on the synthetic mgmt interface.
 - `mark_ftd_offline` (status offline + `ftd_enabled=False`).
-- Site resolution: `resolve_site(hostname, mgmt_ip)` — the mgmt IP drives SITE_IP_MAP (HQ FTDs → 172.31.x → HQ; Afra FTDs → 192.168.19.x → Afranet).
+- Site resolution: `resolve_site(hostname, mgmt_ip)` — the mgmt IP drives SITE_IP_MAP (HQ FTDs → 172.31.x → HQ; Branch FTDs → 192.168.19.x → ExampleISP).
 
 **Config (`config.py`)**
 - `FMC_RANGES` (opt-in, empty default) — IPs of FMC appliances to query for FTDs. `FMC_USER`, `FMC_PASS`, `FMC_PORT` (default 443). Creds validated only when ranges set.

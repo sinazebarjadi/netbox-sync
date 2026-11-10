@@ -317,7 +317,7 @@ def test_parse_mac_table_entry():
 # ── broadcast domain topology ────────────────────────────────────────────────
 
 def test_norm_sw_name():
-    assert mod._norm_sw_name("F12-CCTV-SW-02.example.com") == "f12-cctv-sw-02"
+    assert mod._norm_sw_name("f12-edge-sw-02.example.com") == "f12-edge-sw-02"
     assert mod._norm_sw_name("R4-Core-LAN-SW") == "r4-core-lan-sw"
     assert mod._norm_sw_name("") == ""
 
@@ -332,20 +332,20 @@ def test_broadcast_components():
 
 
 def test_component_key_prefers_vtp_domain_casefolded():
-    members = {"f_-1-cctv-sw", "f12-cctv-sw-02"}
-    vtp = {"f_-1-cctv-sw": "", "f12-cctv-sw-02": "Snapp"}
-    assert mod._component_key(members, vtp) == "snapp"
+    members = {"f_-1-edge-sw", "f12-edge-sw-02"}
+    vtp = {"f_-1-edge-sw": "", "f12-edge-sw-02": "Example"}
+    assert mod._component_key(members, vtp) == "example"
 
 
 def test_component_key_first_hostname_when_no_vtp():
-    members = {"f_-4-cctv-sw-n-01", "f12-cctv-sw-02", "f_-1-cctv-sw"}
-    vtp = {"f_-4-cctv-sw-n-01": "", "f12-cctv-sw-02": "", "f_-1-cctv-sw": ""}
-    assert mod._component_key(members, vtp) == "f12-cctv-sw-02"
+    members = {"f_-4-edge-sw-n-01", "f12-edge-sw-02", "f_-1-edge-sw"}
+    vtp = {"f_-4-edge-sw-n-01": "", "f12-edge-sw-02": "", "f_-1-edge-sw": ""}
+    assert mod._component_key(members, vtp) == "f12-edge-sw-02"
 
 
 VTP_STATUS = """VTP Version capable             : 1 to 3
 VTP version running             : 3
-VTP Domain Name                 : snapp
+VTP Domain Name                 : example
 VTP Pruning Mode                : Disabled (Operationally Disabled)
 VTP Traps Generation            : Disabled
 Device ID                       : d009.c86a.fc80
@@ -364,7 +364,7 @@ VTP Operating Mode                : Transparent
 
 def test_parse_vtp_status_real_output():
     out = mod._parse_vtp_status(VTP_STATUS)
-    assert out["domain"] == "snapp"
+    assert out["domain"] == "example"
     assert out["mode"] == "client"   # Feature VLAN mode, not the MST one
 
 

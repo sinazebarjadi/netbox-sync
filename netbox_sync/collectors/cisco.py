@@ -891,7 +891,7 @@ def sweep_legacy_site_vlans(site_id):
 
 def _sweep_stale_groups(site_id, fed_group_ids, key_by_name):
     """Migration sweep: delete marker-owned groups at the site that are no
-    longer valid — case-variant duplicates of a fed group (e.g. 'Snapp')
+    longer valid — case-variant duplicates of a fed group (e.g. 'Example')
     or abandoned per-switch hostname fallbacks whose switch joined a
     component. Manual groups and fed groups are never touched."""
     api = netbox.get_netbox()

@@ -180,7 +180,7 @@ import netbox_sync.collectors.fortigate as mod
 
 
 STATUS_JSON = {"http_method": "GET", "results": {
-    "hostname": "FGT-DC-01", "serial_number": "FGT60FTK21000001",
+    "hostname": "FW-DC-01", "serial_number": "FGT60FTK2100XXXX",
     "model": "FortiGate-60F", "version": "v7.2.4"}}
 
 MONITOR_IFACES = {"results": {
@@ -198,7 +198,7 @@ CMDB_IFACES = {"results": [
 
 def test_fg_status():
     out = mod._fg_status(STATUS_JSON)
-    assert out == {"hostname": "FGT-DC-01", "serial": "FGT60FTK21000001",
+    assert out == {"hostname": "FW-DC-01", "serial": "FGT60FTK2100XXXX",
                    "model": "FortiGate-60F", "version": "v7.2.4"}
 
 
@@ -492,7 +492,7 @@ git commit -m "Add FortiGate API session, probe, collect and mappers"
 ```python
 LLDP_SUMMARY = """-----------------------------------------------------------------------------
 Port        Device ID          SysName          Capabilities  TTL   Port ID
-port1       00:1c:73:ab:cd:ef  F10-SW-W-02      B,R           120   Gi1/0/1
+port1       00:1c:73:ab:cd:ef  SW-BRANCH-02      B,R           120   Gi1/0/1
 port2       00:1c:73:ab:cd:00  R4-Core-LAN-SW   B,R           120   Twe1/0/31
 """
 
@@ -500,7 +500,7 @@ port2       00:1c:73:ab:cd:00  R4-Core-LAN-SW   B,R           120   Twe1/0/31
 def test_parse_lldp_summary():
     entries = mod._parse_lldp_summary(LLDP_SUMMARY)
     assert len(entries) == 2
-    assert entries[0]["device_id"] == "F10-SW-W-02"
+    assert entries[0]["device_id"] == "SW-BRANCH-02"
     assert entries[0]["local_intf"] == "port1"
     assert entries[0]["remote_intf"] == "Gi1/0/1"
 
@@ -563,11 +563,11 @@ def test_ensure_fortigate_device_creates(monkeypatch):
     monkeypatch.setattr(nbx, "find_device", lambda *a, **k: None)
 
     nbx.ensure_fortigate_device({
-        "ip": "192.0.2.70", "serial": "FGT60FTK21000001",
-        "model": "FortiGate 60F", "hostname": "FGT-DC-01",
+        "ip": "192.0.2.70", "serial": "FGT60FTK2100XXXX",
+        "model": "FortiGate 60F", "hostname": "FW-DC-01",
         "manufacturer": "Fortinet", "firmware": "v7.2.4"})
     payload = devices_ep.created[0]
-    assert payload["serial"] == "FGT60FTK21000001"
+    assert payload["serial"] == "FGT60FTK2100XXXX"
     assert payload["custom_fields"]["fortigate_ip"] == "192.0.2.70"
     assert payload["custom_fields"]["fortigate_enabled"] is True
 

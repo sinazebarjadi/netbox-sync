@@ -6,7 +6,7 @@ import netbox_sync.collectors.fortigate as mod
 
 
 STATUS_JSON = {"http_method": "GET", "results": {
-    "hostname": "FGT-DC-01", "serial_number": "FGT60FTK21000001",
+    "hostname": "FW-DC-01", "serial_number": "FGT60FTK2100XXXX",
     "model": "FortiGate-60F", "version": "v7.2.4"}}
 
 MONITOR_IFACES = {"results": {
@@ -25,7 +25,7 @@ CMDB_IFACES = {"results": [
 
 def test_fg_status():
     out = mod._fg_status(STATUS_JSON)
-    assert out == {"hostname": "FGT-DC-01", "serial": "FGT60FTK21000001",
+    assert out == {"hostname": "FW-DC-01", "serial": "FGT60FTK2100XXXX",
                    "model": "FortiGate-60F", "version": "v7.2.4"}
 
 
@@ -74,15 +74,15 @@ def test_fg_interfaces_include_cmdb_vlan_subifs():
         {"name": "port2", "type": "physical", "ip": "172.31.9.1 255.255.255.0"},
         {"name": "AP MGMT", "type": "vlan", "vlanid": 51,
          "interface": "Core Switch", "ip": "172.31.2.1 255.255.255.0"},
-        {"name": "AsiaTech", "type": "vlan", "vlanid": 10,
-         "interface": "PO5", "ip": "79.127.120.184 255.255.255.240"},
+        {"name": "PartnerNet", "type": "vlan", "vlanid": 10,
+         "interface": "PO5", "ip": "203.0.113.184 255.255.255.240"},
     ]}
     ports = {p["name"]: p for p in mod._fg_interfaces(mon, cmdb)}
     assert len(ports) == 4
     assert ports["AP MGMT"]["vlanid"] == 51
     assert ports["AP MGMT"]["parent"] == "Core Switch"
     assert ports["AP MGMT"]["link"] is True
-    assert ports["AsiaTech"]["vlanid"] == 10
+    assert ports["PartnerNet"]["vlanid"] == 10
 
 
 def test_fg_interfaces_include_aggregates_with_members():
@@ -120,15 +120,15 @@ def test_ssh_command_failure_detected():
 IFCONFIG_A = """AP MGMT\tLink encap:Ethernet  HWaddr 00:09:0F:09:00:24
 \tinet addr:172.31.2.1  Bcast:172.31.2.255  Mask:255.255.255.0
 
-AsiaTech\tLink encap:Ethernet  HWaddr 00:09:0F:09:00:26
-\tinet addr:79.127.120.184  Bcast:79.127.120.191  Mask:255.255.255.240
+PartnerNet\tLink encap:Ethernet  HWaddr 00:09:0F:09:00:26
+\tinet addr:203.0.113.184  Bcast:203.0.113.191  Mask:255.255.255.240
 """
 
 
 def test_parse_ifconfig_a():
     out = mod._parse_ifconfig_a(IFCONFIG_A)
     assert out == {"AP MGMT": "00:09:0f:09:00:24",
-                   "AsiaTech": "00:09:0f:09:00:26"}
+                   "PartnerNet": "00:09:0f:09:00:26"}
 
 
 # Real HA output from the user's FG180F pair (FortiOS 7.2.13)
@@ -168,21 +168,21 @@ def test_fg_ha_standalone():
 
 # Real-shape firewall NAT fixtures (trimmed from the live FG180F)
 FW_VIP = {"results": [
-    {"name": "TimeKeeping-443", "extip": "77.104.83.164", "extport": 443,
+    {"name": "ServiceA-443", "extip": "203.0.113.164", "extport": 443,
      "mappedip": [{"range": "172.31.5.53"}], "mappedport": 443,
      "protocol": "tcp", "portforward": "enable", "status": "enable"},
 ]}
 
 FW_IPPOOL = {"results": [
-    {"name": "79.127.120.186", "type": "overload",
-     "startip": "79.127.120.186", "endip": "79.127.120.186"},
+    {"name": "203.0.113.186", "type": "overload",
+     "startip": "203.0.113.186", "endip": "203.0.113.186"},
 ]}
 
 
 def test_fg_firewall_vips():
     out = mod._fg_firewall_vips(FW_VIP)
-    assert out == [{"kind": "vip", "name": "TimeKeeping-443",
-                    "extip": "77.104.83.164", "extport": 443,
+    assert out == [{"kind": "vip", "name": "ServiceA-443",
+                    "extip": "203.0.113.164", "extport": 443,
                     "mappedip": ["172.31.5.53"], "mappedport": 443,
                     "protocol": "tcp", "portforward": "enable",
                     "status": "enable"}]
@@ -190,9 +190,9 @@ def test_fg_firewall_vips():
 
 def test_fg_firewall_ippools():
     out = mod._fg_firewall_ippools(FW_IPPOOL)
-    assert out == [{"kind": "pool", "name": "79.127.120.186",
-                    "type": "overload", "startip": "79.127.120.186",
-                    "endip": "79.127.120.186"}]
+    assert out == [{"kind": "pool", "name": "203.0.113.186",
+                    "type": "overload", "startip": "203.0.113.186",
+                    "endip": "203.0.113.186"}]
 
 
 def test_fg_vlans():
@@ -249,7 +249,7 @@ def test_fortigate_session_login_flow(monkeypatch):
 
 LLDP_SUMMARY = """-----------------------------------------------------------------------------
 Port        Device ID          SysName          Capabilities  TTL   Port ID
-port1       00:1c:73:ab:cd:ef  F10-SW-W-02      B,R           120   Gi1/0/1
+port1       00:1c:73:ab:cd:ef  SW-BRANCH-02      B,R           120   Gi1/0/1
 port2       00:1c:73:ab:cd:00  R4-Core-LAN-SW   B,R           120   Twe1/0/31
 """
 
@@ -257,7 +257,7 @@ port2       00:1c:73:ab:cd:00  R4-Core-LAN-SW   B,R           120   Twe1/0/31
 def test_parse_lldp_summary():
     entries = mod._parse_lldp_summary(LLDP_SUMMARY)
     assert len(entries) == 2
-    assert entries[0]["device_id"] == "F10-SW-W-02"
+    assert entries[0]["device_id"] == "SW-BRANCH-02"
     assert entries[0]["local_intf"] == "port1"
     assert entries[0]["remote_intf"] == "Gi1/0/1"
 
