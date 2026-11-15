@@ -148,3 +148,82 @@ def test_unv_with_no_hdds_writes_nothing():
                              hdds=[], vendor="Uniview")
     assert items.create_calls == 0
     assert items.update_calls == 0
+
+
+def test_nvr_disk_adopts_me_item_with_real_serial_at_same_slot(monkeypatch):
+    """The NVR reports no serial but ManageEngine already imported the same
+    physical disk with a real serial. Sync must ADOPT that item (one item, real
+    serial) instead of creating a second synthetic-serial duplicate."""
+    me_item = FakeRecord(11, serial="WCC7K7TPPYXD", device_id=42,
+                         name="WCC7K7TPPYXD (4TB)",
+                         description="Capacity: 4TB | Asset Tag: 123",
+                         role=type("R", (), {"name": "HDD"})())
+    items = FakeEndpoint([me_item])
+    _patch_netbox(monkeypatch, items)
+    hdds = [_hdd(slot="1", serial=None, model=None, cap="4TB")]
+
+    sync_mod._sync_nvr_disks(api=_fake_api(inventory_items=items),
+                             dev_id=42, probe={"serial": "NVR-1"},
+                             hdds=hdds, vendor="Hikvision")
+
+    # exactly one item, still carrying the ME real serial
+    assert items.create_calls == 0, "must not create a duplicate"
+    assert len(items.items) == 1
+    # ME-owned data is NOT overwritten by the NVR's sparse data — only a
+    # 'Present on NVR' marker is appended to the description.
+    assert items.updated[0]["id"] == 11
+    assert items.updated[0]["serial"] == "WCC7K7TPPYXD"
+    assert items.updated[0].get("name") is None  # name untouched
+    assert "Present on NVR slot 1" in items.updated[0]["description"]
+    assert "Capacity: 4TB" in items.updated[0]["description"]
+
+
+def test_nvr_disk_with_real_nvr_serial_does_not_steal_me_item(monkeypatch):
+    """A disk whose NVR reports a REAL serial matches by that serial and must
+    never steal an unrelated ManageEngine item on the same device."""
+    me_item = FakeRecord(12, serial="WCC7K7TPPYXD", device_id=42,
+                         name="WCC7K7TPPYXD (4TB)")
+    items = FakeEndpoint([me_item])
+    _patch_netbox(monkeypatch, items)
+    hdds = [_hdd(slot="1", serial="REAL-NVR-SERIAL", cap="4TB")]
+
+    sync_mod._sync_nvr_disks(api=_fake_api(inventory_items=items),
+                             dev_id=42, probe={"serial": "NVR-1"},
+                             hdds=hdds, vendor="Hikvision")
+
+    # different physical disk -> new item is correct, ME item untouched
+    assert items.create_calls == 1
+    assert items.created[0]["serial"] == "REAL-NVR-SERIAL"
+    assert items.updated == []
+
+
+def test_nvr_disk_adopted_me_item_is_idempotent_on_second_run(monkeypatch):
+    """Second run must find 'Present on NVR' already in the description and
+    write nothing at all."""
+    me_item = FakeRecord(13, serial="WCC7K7TPPYXD", device_id=42,
+                         name="WCC7K7TPPYXD (4TB)",
+                         description="Capacity: 4TB | Present on NVR slot 1 (ok)",
+                         role=type("R", (), {"name": "HDD"})())
+    items = FakeEndpoint([me_item])
+    _patch_netbox(monkeypatch, items)
+    hdds = [_hdd(slot="1", serial=None, model=None, cap="4TB")]
+
+    sync_mod._sync_nvr_disks(api=_fake_api(inventory_items=items),
+                             dev_id=42, probe={"serial": "NVR-1"},
+                             hdds=hdds, vendor="Hikvision")
+
+    assert items.create_calls == 0
+    assert items.update_calls == 0, items.updated
+
+
+def test_parse_hdd_capacity_is_decimal_tb():
+    """Hikvision reports capacity in MB (decimal). 17166336 MB must render as
+    16TB, not the binary 16.4TB the old code produced."""
+    from netbox_sync.collectors import hikvision as hk
+    xml = ('<hddList xmlns="http://www.isapi.org/ver20/XMLSchema">'
+           '<hdd><id>1</id><hddType>SATA</hddType><capacity>17166336</capacity>'
+           '<status>ok</status><property>RW</property><hddSerialNumber></hddSerialNumber>'
+           '<hddModel></hddModel></hdd></hddList>')
+    hdds = hk._parse_hdd_list(xml)
+    assert hdds[0]["capacity"] == "16TB", hdds[0]["capacity"]
+

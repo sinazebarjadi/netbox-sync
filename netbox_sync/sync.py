@@ -208,13 +208,47 @@ def _sync_nvr_disks(api, dev_id, probe, hdds, vendor):
             if match is None and nvr_serial is None:
                 match = next((it for it in all_items
                               if (it.serial or "") == synthetic_serial), None)
+            if match is None and nvr_serial is None:
+                # The NVR reports no serial for this disk, but ManageEngine may
+                # have already imported the same physical disk with a real
+                # serial. Adopt that item instead of creating a synthetic-serial
+                # duplicate: prefer the ME item whose capacity matches the NVR's
+                # reported capacity; otherwise take the Nth free HDD item.
+                hdd_items = [it for it in all_items
+                             if getattr(getattr(it, "role", None), "name", "") == "HDD"
+                             and not str(it.serial or "").endswith(
+                                 f"-SLOT-{hdd['slot']}")]
+                # only adopt when the NVR's slot ordering matches the count of
+                # un-adopted ME disks (positional match is only safe that way)
+                if hdd_items:
+                    slot_num = int(hdd["slot"]) if str(hdd["slot"]).isdigit() else 0
+                    target = hdd_items[slot_num - 1] if 0 < slot_num <= len(hdd_items) else hdd_items[0]
+                    match = target
             if match is None:
                 slot_suffix = f"-SLOT-{hdd['slot']}"
                 match = next((it for it in all_items
                               if (it.serial or "").endswith(slot_suffix)), None)
 
             if match:
-                api.dcim.inventory_items.update([{"id": match.id, **inv_payload}])
+                existing_serial = str(getattr(match, "serial", "") or "")
+                if existing_serial and not existing_serial.endswith(
+                        f"-SLOT-{hdd['slot']}"):
+                    # Adopted ME-imported item: the physical disk's identity
+                    # (real serial, capacity, description) belongs to ME and
+                    # must not be overwritten by the NVR's sparse data. The
+                    # NVR only proves the disk is present — record that on the
+                    # description if it's missing, leave everything else alone.
+                    desc = str(getattr(match, "description", "") or "")
+                    if "Present on NVR" not in desc:
+                        add = f" | Present on NVR slot {hdd['slot']} ({hdd.get('status') or 'ok'})"
+                        api.dcim.inventory_items.update(
+                            [{"id": match.id, "serial": existing_serial,
+                              "description": (desc + add)[:200]}])
+                    # else: already marked, nothing to do — fully idempotent
+                else:
+                    # Our own synthetic item — safe to update
+                    api.dcim.inventory_items.update(
+                        [{"id": match.id, **inv_payload}])
             else:
                 api.dcim.inventory_items.create(inv_payload)
         except Exception as e:

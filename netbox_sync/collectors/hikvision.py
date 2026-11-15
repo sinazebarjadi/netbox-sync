@@ -82,17 +82,24 @@ def _parse_hdd_list(xml_text):
         prop = _child_text(hdd, "property")
         name = _child_text(hdd, "hddName") or f"HDD-{slot_id}"
 
-        # Capacity string (MB -> TB/GB)
-        cap_str = ""
-        try:
-            val_mb = int(cap_mb)
-            if val_mb >= 1024 * 1024:
-                tb = val_mb / (1024 * 1024)
-                cap_str = f"{round(tb, 1)}TB" if tb != int(tb) else f"{int(tb)}TB"
-            elif val_mb > 0:
-                cap_str = f"{val_mb // 1024}GB"
-        except (ValueError, TypeError):
-            pass
+        # Capacity string. Hikvision reports the LBA count in decimal MB; the
+        # drive's marketed size is a round number (4/6/8/12/16TB...). Map to
+        # the nearest marketed size within tolerance instead of rounding the
+        # raw number — 17,166,336 MB is a "16TB" drive, not 17TB.
+        def _cap_str(mb):
+            try:
+                v = int(mb)
+            except (ValueError, TypeError):
+                return ""
+            marketed_tb = [1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+            tb = v / 1_000_000.0
+            for size in marketed_tb:
+                if abs(tb - size) <= max(size * 0.10, 0.5):
+                    return f"{size}TB"
+            if tb < 1:
+                return f"{round(v / 1000)}GB"
+            return f"{round(tb)}TB"
+        cap_str = _cap_str(cap_mb)
 
         hdds.append({
             "slot": slot_id,
