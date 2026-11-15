@@ -74,7 +74,9 @@ from netbox_sync.netbox import (get_netbox, ensure_server_device,
                                  ensure_custom_fields,
                                  _check_offline,
                                  sync_inventory,
-                                 sync_device_power, sync_rack_power)
+                                 sync_device_power, sync_rack_power,
+                                 get_or_create_manufacturer,
+                                 get_or_create_inventory_role)
 from netbox_sync.scanner import scan_all
 from netbox_sync.utils import resolve_site
 
@@ -160,6 +162,65 @@ def _unique_nvr_name(raw_name, hostname, ip, family):
     return raw
 
 
+def _sync_nvr_disks(api, dev_id, probe, hdds, vendor):
+    """Sync physical disks from an NVR into NetBox Inventory Items.
+
+    Vendor-independent write path: Hikvision supplies hdds from its ISAPI
+    storage endpoint; Dahua/UNV supply an empty list because their APIs expose
+    no disk data, so nothing is written and ManageEngine remains the source.
+
+    Manufacturer and part number come from the disk's own model when the NVR
+    reports one (a WD40PURZ is made by Western Digital, not by the NVR vendor).
+    """
+    if not hdds:
+        log("INFO", f"  no physical-disk data from {vendor} NVR "
+                    f"{probe.get('ip') or probe.get('serial', '?')} — skipping")
+        return
+
+    all_items = list(api.dcim.inventory_items.filter(device_id=dev_id))
+    for hdd in hdds:
+        try:
+            nvr_serial = (hdd.get("serial") or "").strip() or None
+            synthetic_serial = f"{probe.get('serial', 'NVR')}-SLOT-{hdd['slot']}"
+            model = (hdd.get("model") or "").strip() or None
+
+            desc_parts = [f"Type: {hdd.get('type')}",
+                          f"Capacity: {hdd.get('capacity')}",
+                          f"Status: {hdd.get('status')}"]
+            if model:
+                desc_parts.append(f"Model: {model}")
+
+            inv_payload = {
+                "device":       dev_id,
+                "name":         hdd["name"][:64],
+                "role":         get_or_create_inventory_role("HDD"),
+                "manufacturer": get_or_create_manufacturer(model or "Unknown"),
+                "serial":       nvr_serial or synthetic_serial,
+                "description":  ", ".join(desc_parts)[:200],
+            }
+            if model:
+                inv_payload["part_id"] = model[:50]
+
+            # Match: exact serial first, then synthetic slot key, then any
+            # ME-imported item at the same slot (prevents duplicates).
+            match = next((it for it in all_items
+                          if (it.serial or "") == inv_payload["serial"]), None)
+            if match is None and nvr_serial is None:
+                match = next((it for it in all_items
+                              if (it.serial or "") == synthetic_serial), None)
+            if match is None:
+                slot_suffix = f"-SLOT-{hdd['slot']}"
+                match = next((it for it in all_items
+                              if (it.serial or "").endswith(slot_suffix)), None)
+
+            if match:
+                api.dcim.inventory_items.update([{"id": match.id, **inv_payload}])
+            else:
+                api.dcim.inventory_items.create(inv_payload)
+        except Exception as e:
+            log("WARN", f"  HDD sync failed for slot {hdd.get('slot')}: {e}")
+
+
 def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                  switch_by_ip, api):
     """Process one NVR family end to end (Hikvision / Dahua / Uniview):
@@ -233,57 +294,11 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
         except Exception as e:
             log("WARN", f"  NVR primary IPv4 sync failed for {ip}: {e}")
 
-        # Hard drives -> Inventory Items attached to the NVR device
-        # Priority: NVR-discovered data wins over any ME-imported item.
-        # Match strategy: real serial first (if NVR exposes it), else
-        # synthetic slot key; also try matching an existing item by slot
-        # when the NVR doesn't expose serials (prevents duplicates with
-        # ME-imported items that have real serials).
-        all_items = list(api.dcim.inventory_items.filter(device_id=dev_id))
-        for hdd in data.get("hdds", []):
-            try:
-                nvr_serial = hdd.get("serial")
-                synthetic_serial = f"{probe.get('serial', 'NVR')}-SLOT-{hdd['slot']}"
-                inv_payload = {
-                    "device":       dev_id,
-                    "name":         hdd["name"][:64],
-                    "role":         get_or_create_inventory_role("HDD"),
-                    "manufacturer": get_or_create_manufacturer("Hikvision"),
-                    "serial":       nvr_serial or synthetic_serial,
-                    "description":  f"Type: {hdd.get('type')}, Capacity: {hdd.get('capacity')}, Status: {hdd.get('status')}",
-                }
-
-                # Find existing item: exact serial match first, then slot-based
-                # match for synthetic-serial items (prevents duplicate with
-                # ME-imported items that share the same slot but have a real serial)
-                match = None
-                for it in all_items:
-                    if (it.serial or "") == inv_payload["serial"]:
-                        match = it
-                        break
-                if match is None and nvr_serial is None:
-                    # Try matching by slot: synthetic key OR real-serial item at same slot
-                    for it in all_items:
-                        it_serial = (it.serial or "")
-                        if it_serial == synthetic_serial:
-                            match = it
-                            break
-                if match is None:
-                    # Check if an ME-imported item with a real serial exists at
-                    # the same slot — if so, adopt it (update with NVR data)
-                    slot_suffix = f"-SLOT-{hdd['slot']}"
-                    for it in all_items:
-                        it_serial = (it.serial or "")
-                        if it_serial.endswith(slot_suffix):
-                            match = it
-                            break
-
-                if match:
-                    api.dcim.inventory_items.update([{"id": match.id, **inv_payload}])
-                else:
-                    api.dcim.inventory_items.create(inv_payload)
-            except Exception as e:
-                log("WARN", f"  HDD sync failed for slot {hdd.get('slot')}: {e}")
+        # Hard drives -> Inventory Items attached to the NVR device.
+        # Vendor-independent write path: Hikvision reports disks via ISAPI;
+        # Dahua/UNV have no disk API, so they pass an empty list and the helper
+        # logs a skip (their disks stay owned by the ManageEngine sync).
+        _sync_nvr_disks(api, dev_id, probe, data.get("hdds", []), family)
 
         # Cameras -> separate devices, linked to the NVR via cam_nvr.
         seen_camera_serials = set()

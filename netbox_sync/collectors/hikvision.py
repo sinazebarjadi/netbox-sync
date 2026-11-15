@@ -101,8 +101,9 @@ def _parse_hdd_list(xml_text):
             "capacity": cap_str,
             "status": status or "ok",
             "property": prop or "RW",
-            "model": _child_text(hdd, "model"),
-            "serial": _child_text(hdd, "serialNumber"),
+            # Hikvision firmware names these fields hddModel / hddSerialNumber
+            "model": _child_text(hdd, "hddModel"),
+            "serial": _child_text(hdd, "hddSerialNumber"),
         })
 
     return hdds
