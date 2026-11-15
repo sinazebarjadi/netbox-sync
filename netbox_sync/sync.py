@@ -177,11 +177,21 @@ def _sync_nvr_disks(api, dev_id, probe, hdds, vendor):
                     f"{probe.get('ip') or probe.get('serial', '?')} — skipping")
         return
 
+    # Rule: never fabricate an HDD serial. A disk is only synced when the NVR
+    # reports the physical drive's real serial number. If the NVR reports no
+    # serial (firmware does not expose per-drive identity), the disk is
+    # recorded as unavailable and skipped — never given a synthetic value.
+    hdds = [h for h in hdds if (h.get("serial") or "").strip()]
+    if not hdds:
+        log("WARN", f"  {vendor} NVR {probe.get('ip') or probe.get('serial', '?')}: "
+                    "physical disks present but NO REAL HDD SERIAL is exposed "
+                    "by the device — recording as unavailable, writing nothing")
+        return
+
     all_items = list(api.dcim.inventory_items.filter(device_id=dev_id))
     for hdd in hdds:
         try:
-            nvr_serial = (hdd.get("serial") or "").strip() or None
-            synthetic_serial = f"{probe.get('serial', 'NVR')}-SLOT-{hdd['slot']}"
+            hdd_serial = (hdd.get("serial") or "").strip()
             model = (hdd.get("model") or "").strip() or None
 
             desc_parts = [f"Type: {hdd.get('type')}",
@@ -195,60 +205,20 @@ def _sync_nvr_disks(api, dev_id, probe, hdds, vendor):
                 "name":         hdd["name"][:64],
                 "role":         get_or_create_inventory_role("HDD"),
                 "manufacturer": get_or_create_manufacturer(model or "Unknown"),
-                "serial":       nvr_serial or synthetic_serial,
+                "serial":       hdd_serial,
                 "description":  ", ".join(desc_parts)[:200],
             }
             if model:
                 inv_payload["part_id"] = model[:50]
 
-            # Match: exact serial first, then synthetic slot key, then any
-            # ME-imported item at the same slot (prevents duplicates).
+            # Match only by the real HDD serial — never by slot key or by
+            # adopting an unrelated item. One physical drive = one serial =
+            # one inventory item across NetBox.
             match = next((it for it in all_items
-                          if (it.serial or "") == inv_payload["serial"]), None)
-            if match is None and nvr_serial is None:
-                match = next((it for it in all_items
-                              if (it.serial or "") == synthetic_serial), None)
-            if match is None and nvr_serial is None:
-                # The NVR reports no serial for this disk, but ManageEngine may
-                # have already imported the same physical disk with a real
-                # serial. Adopt that item instead of creating a synthetic-serial
-                # duplicate: prefer the ME item whose capacity matches the NVR's
-                # reported capacity; otherwise take the Nth free HDD item.
-                hdd_items = [it for it in all_items
-                             if getattr(getattr(it, "role", None), "name", "") == "HDD"
-                             and not str(it.serial or "").endswith(
-                                 f"-SLOT-{hdd['slot']}")]
-                # only adopt when the NVR's slot ordering matches the count of
-                # un-adopted ME disks (positional match is only safe that way)
-                if hdd_items:
-                    slot_num = int(hdd["slot"]) if str(hdd["slot"]).isdigit() else 0
-                    target = hdd_items[slot_num - 1] if 0 < slot_num <= len(hdd_items) else hdd_items[0]
-                    match = target
-            if match is None:
-                slot_suffix = f"-SLOT-{hdd['slot']}"
-                match = next((it for it in all_items
-                              if (it.serial or "").endswith(slot_suffix)), None)
+                          if (it.serial or "") == hdd_serial), None)
 
             if match:
-                existing_serial = str(getattr(match, "serial", "") or "")
-                if existing_serial and not existing_serial.endswith(
-                        f"-SLOT-{hdd['slot']}"):
-                    # Adopted ME-imported item: the physical disk's identity
-                    # (real serial, capacity, description) belongs to ME and
-                    # must not be overwritten by the NVR's sparse data. The
-                    # NVR only proves the disk is present — record that on the
-                    # description if it's missing, leave everything else alone.
-                    desc = str(getattr(match, "description", "") or "")
-                    if "Present on NVR" not in desc:
-                        add = f" | Present on NVR slot {hdd['slot']} ({hdd.get('status') or 'ok'})"
-                        api.dcim.inventory_items.update(
-                            [{"id": match.id, "serial": existing_serial,
-                              "description": (desc + add)[:200]}])
-                    # else: already marked, nothing to do — fully idempotent
-                else:
-                    # Our own synthetic item — safe to update
-                    api.dcim.inventory_items.update(
-                        [{"id": match.id, **inv_payload}])
+                api.dcim.inventory_items.update([{"id": match.id, **inv_payload}])
             else:
                 api.dcim.inventory_items.create(inv_payload)
         except Exception as e:
