@@ -62,60 +62,6 @@ def _child_text(elem, tag):
     return None
 
 
-def _parse_hdd_list(xml_text):
-    """Parse `/ISAPI/ContentMgmt/Storage/hdd` XML to list of disk dicts.
-    Filters out 'Virtual Disk' array abstractions and yields physical disks."""
-    if not xml_text:
-        return []
-    try:
-        root = ET.fromstring(xml_text)
-    except Exception:
-        return []
-    hdds = []
-    for hdd in root.findall(f"{{{_ISAPI_NS}}}hdd") or root.findall("hdd"):
-        hdd_type = _child_text(hdd, "hddType") or ""
-        if hdd_type.lower() == "virtual disk":
-            continue
-        slot_id = _child_text(hdd, "id")
-        cap_mb = _child_text(hdd, "capacity")
-        status = _child_text(hdd, "status")
-        prop = _child_text(hdd, "property")
-        name = _child_text(hdd, "hddName") or f"HDD-{slot_id}"
-
-        # Capacity string. Hikvision reports the LBA count in decimal MB; the
-        # drive's marketed size is a round number (4/6/8/12/16TB...). Map to
-        # the nearest marketed size within tolerance instead of rounding the
-        # raw number — 17,166,336 MB is a "16TB" drive, not 17TB.
-        def _cap_str(mb):
-            try:
-                v = int(mb)
-            except (ValueError, TypeError):
-                return ""
-            marketed_tb = [1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
-            tb = v / 1_000_000.0
-            for size in marketed_tb:
-                if abs(tb - size) <= max(size * 0.10, 0.5):
-                    return f"{size}TB"
-            if tb < 1:
-                return f"{round(v / 1000)}GB"
-            return f"{round(tb)}TB"
-        cap_str = _cap_str(cap_mb)
-
-        hdds.append({
-            "slot": slot_id,
-            "name": f"Disk {slot_id}" + (f" ({cap_str})" if cap_str else ""),
-            "type": hdd_type or "SATA",
-            "capacity": cap_str,
-            "status": status or "ok",
-            "property": prop or "RW",
-            # Hikvision firmware names these fields hddModel / hddSerialNumber
-            "model": _child_text(hdd, "hddModel"),
-            "serial": _child_text(hdd, "hddSerialNumber"),
-        })
-
-    return hdds
-
-
 def _parse_device_info(xml_text):
     """`GET /ISAPI/System/deviceInfo` -> NVR identity dict. Also used for the
     per-channel proxied camera deviceInfo (which carries the camera MAC)."""
@@ -287,12 +233,8 @@ def hikvision_collect(ip):
         cameras = _parse_channels(
             sess.get("/ISAPI/ContentMgmt/InputProxy/channels"))
         
-        # Hard drives collection directly from the NVR
-        try:
-            hdds = _parse_hdd_list(sess.get("/ISAPI/ContentMgmt/Storage/hdd"))
-        except Exception as exc:
-            log("DEBUG", f"  hikvision HDD collection skipped for {ip}: {exc}")
-            hdds = []
+        # Physical disks are synchronized exclusively from ManageEngine
+        # AssetExplorer. The NVR ISAPI is not queried for storage.
         try:
             status = _parse_channel_status(
                 sess.get("/ISAPI/ContentMgmt/InputProxy/channels/status"))
@@ -345,7 +287,6 @@ def hikvision_collect(ip):
                 "firmware": info.get("firmware"),
             },
             "cameras": cameras,
-            "hdds": hdds,
         }
     finally:
         sess.logout()

@@ -162,69 +162,6 @@ def _unique_nvr_name(raw_name, hostname, ip, family):
     return raw
 
 
-def _sync_nvr_disks(api, dev_id, probe, hdds, vendor):
-    """Sync physical disks from an NVR into NetBox Inventory Items.
-
-    Vendor-independent write path: Hikvision supplies hdds from its ISAPI
-    storage endpoint; Dahua/UNV supply an empty list because their APIs expose
-    no disk data, so nothing is written and ManageEngine remains the source.
-
-    Manufacturer and part number come from the disk's own model when the NVR
-    reports one (a WD40PURZ is made by Western Digital, not by the NVR vendor).
-    """
-    if not hdds:
-        log("INFO", f"  no physical-disk data from {vendor} NVR "
-                    f"{probe.get('ip') or probe.get('serial', '?')} — skipping")
-        return
-
-    # Rule: never fabricate an HDD serial. A disk is only synced when the NVR
-    # reports the physical drive's real serial number. If the NVR reports no
-    # serial (firmware does not expose per-drive identity), the disk is
-    # recorded as unavailable and skipped — never given a synthetic value.
-    hdds = [h for h in hdds if (h.get("serial") or "").strip()]
-    if not hdds:
-        log("WARN", f"  {vendor} NVR {probe.get('ip') or probe.get('serial', '?')}: "
-                    "physical disks present but NO REAL HDD SERIAL is exposed "
-                    "by the device — recording as unavailable, writing nothing")
-        return
-
-    all_items = list(api.dcim.inventory_items.filter(device_id=dev_id))
-    for hdd in hdds:
-        try:
-            hdd_serial = (hdd.get("serial") or "").strip()
-            model = (hdd.get("model") or "").strip() or None
-
-            desc_parts = [f"Type: {hdd.get('type')}",
-                          f"Capacity: {hdd.get('capacity')}",
-                          f"Status: {hdd.get('status')}"]
-            if model:
-                desc_parts.append(f"Model: {model}")
-
-            inv_payload = {
-                "device":       dev_id,
-                "name":         hdd["name"][:64],
-                "role":         get_or_create_inventory_role("HDD"),
-                "manufacturer": get_or_create_manufacturer(model or "Unknown"),
-                "serial":       hdd_serial,
-                "description":  ", ".join(desc_parts)[:200],
-            }
-            if model:
-                inv_payload["part_id"] = model[:50]
-
-            # Match only by the real HDD serial — never by slot key or by
-            # adopting an unrelated item. One physical drive = one serial =
-            # one inventory item across NetBox.
-            match = next((it for it in all_items
-                          if (it.serial or "") == hdd_serial), None)
-
-            if match:
-                api.dcim.inventory_items.update([{"id": match.id, **inv_payload}])
-            else:
-                api.dcim.inventory_items.create(inv_payload)
-        except Exception as e:
-            log("WARN", f"  HDD sync failed for slot {hdd.get('slot')}: {e}")
-
-
 def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
                  switch_by_ip, api):
     """Process one NVR family end to end (Hikvision / Dahua / Uniview):
@@ -298,11 +235,8 @@ def process_nvrs(probes, collect_fn, ensure_fn, family, mac_map,
         except Exception as e:
             log("WARN", f"  NVR primary IPv4 sync failed for {ip}: {e}")
 
-        # Hard drives -> Inventory Items attached to the NVR device.
-        # Vendor-independent write path: Hikvision reports disks via ISAPI;
-        # Dahua/UNV have no disk API, so they pass an empty list and the helper
-        # logs a skip (their disks stay owned by the ManageEngine sync).
-        _sync_nvr_disks(api, dev_id, probe, data.get("hdds", []), family)
+        # Physical disks are synchronized exclusively from ManageEngine
+        # AssetExplorer (sync_assetexplorer), never by scanning the NVR.
 
         # Cameras -> separate devices, linked to the NVR via cam_nvr.
         seen_camera_serials = set()

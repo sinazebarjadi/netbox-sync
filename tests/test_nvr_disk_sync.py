@@ -1,162 +1,106 @@
-"""NVR physical-disk sync tests.
+"""NVR disk inventory is ME-only: no NVR scanning, no vendor disk logic.
 
-Contract (real-serial-only):
-- A disk becomes an Inventory Item ONLY when the NVR reports the physical
-  drive's own serial number.
-- NEVER fabricate a serial from the NVR serial, MAC, or slot.
-- Disks with no reported serial are skipped and logged as unavailable.
-- Idempotent: same real serial -> update, never duplicate.
-- Dahua/UNV: no disk API -> write nothing.
+Contract:
+- sync.py must NOT contain _sync_nvr_disks or any NVR disk collection call.
+- hikvision_collect must NOT return or fetch an "hdds" key.
+- dahua_collect / unv_collect must not collect disks (unchanged).
+- ME component sync (used_by -> NVR) attaches real-serial HDDs to the NVR and
+  is idempotent.
 """
+import inspect
 import pytest
 
 import netbox_sync.sync as sync_mod
-import netbox_sync.netbox as nbx
+import netbox_sync.collectors.hikvision as hik
+
+
+def test_sync_module_has_no_nvr_disk_sync():
+    src = inspect.getsource(sync_mod)
+    assert "_sync_nvr_disks" not in src
+    assert "data.get(\"hdds\"" not in src
+    assert not hasattr(sync_mod, "_sync_nvr_disks")
+
+
+def test_hikvision_collect_has_no_hdd_logic():
+    src = inspect.getsource(hik)
+    assert "_parse_hdd_list" not in src
+    assert "Storage/hdd" not in src
+    assert not hasattr(hik, "_parse_hdd_list")
+
+
+def test_hikvision_collect_returns_no_hdds(monkeypatch):
+    """hikvision_collect result must not contain an hdds key."""
+    class _FakeSession:
+        def __init__(self, *a, **k): pass
+        def get(self, path):
+            if path == "/ISAPI/System/deviceInfo":
+                return ("<DeviceInfo><deviceName>N</deviceName></DeviceInfo>")
+            if path == "/ISAPI/ContentMgmt/InputProxy/channels":
+                return ("<InputProxyChannelList><InputProxyChannel>"
+                        "<id>1</id><name>C1</name></InputProxyChannel>"
+                        "</InputProxyChannelList>")
+            if path == "/ISAPI/ContentMgmt/InputProxy/channels/status":
+                return "<InputProxyChannelStatusList/>"
+            if path.endswith("/deviceInfo"):
+                return ("<DeviceInfo><serialNumber>S1</serialNumber>"
+                        "<macAddress>b4:0b:44:12:ab:cd</macAddress></DeviceInfo>")
+            raise RuntimeError(path)
+        def logout(self): pass
+
+    monkeypatch.setattr(hik, "HikvisionSession", _FakeSession)
+    out = hik.hikvision_collect("10.0.0.1")
+    assert "hdds" not in out
+    assert out["summary"]["name"] == "N"
+
+
+# ── ME component -> NVR attach (real serial only) ────────────────────────────
+
+from netbox_sync.assetexplorer_sync import _ensure_inventory_item
 from tests.test_netbox_sync import FakeEndpoint, FakeRecord, _fake_api
+import netbox_sync.assetexplorer_sync as ae_sync
+from netbox_sync.collectors.assetexplorer import _normalize
 
 
-@pytest.fixture(autouse=True)
-def _clear_caches():
-    for cache in (nbx._INVENTORY_ROLE_CACHE, nbx._MANUFACTURER_CACHE,
-                  nbx._ROLE_CACHE, nbx._SITE_CACHE, nbx._DEVICE_TYPE_CACHE):
-        cache.clear()
-    yield
-    for cache in (nbx._INVENTORY_ROLE_CACHE, nbx._MANUFACTURER_CACHE,
-                  nbx._ROLE_CACHE, nbx._SITE_CACHE, nbx._DEVICE_TYPE_CACHE):
-        cache.clear()
+def _hdd_rec(nvr_name, nvr_serial):
+    return _normalize({
+        "id": "700", "name": "WD8PURZ-85BUY0", "org_serial_number": "WD8PURZ-85BUY0",
+        "product_type": {"name": "HARD-CCTV", "internal_name": None},
+        "used_by_asset": {"name": nvr_name, "org_serial_number": nvr_serial},
+        "site": {"name": "HQ"}, "state": {"name": "In Use"},
+        "udf_fields": {"udf_sline_601": "8TB"},
+        "product": {"name": "WD Purple 8TB", "manufacturer": "Western Digital"},
+    })
 
 
-def _hdd(slot="1", model="WD40PURZ", serial="WD-SN-001", cap="4TB", status="ok"):
-    return {"slot": slot, "name": f"Disk {slot} ({cap})", "type": "SATA",
-            "capacity": cap, "status": status, "property": "RW",
-            "model": model, "serial": serial}
-
-
-def _patch_netbox(monkeypatch):
-    calls = {"manufacturers": [], "roles": []}
-    monkeypatch.setattr(sync_mod, "get_or_create_manufacturer",
-                        lambda n: (calls["manufacturers"].append(n), 55)[1])
-    monkeypatch.setattr(sync_mod, "get_or_create_inventory_role",
-                        lambda n: (calls["roles"].append(n), 7)[1])
-    return calls
-
-
-def _sync(items, hdds, probe=None, vendor="Hikvision"):
-    return sync_mod._sync_nvr_disks(api=_fake_api(inventory_items=items),
-                                    dev_id=42,
-                                    probe=probe or {"serial": "NVR-1"},
-                                    hdds=hdds, vendor=vendor)
-
-
-def test_real_serial_creates_item_with_model_and_manufacturer(monkeypatch):
+def test_me_hdd_attaches_to_nvr_and_is_idempotent(monkeypatch):
+    parent = FakeRecord(9657, name="HQ-NVR-02", serial="FK2666191")
+    devices = FakeEndpoint([parent])
     items = FakeEndpoint([])
-    calls = _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(model="WD40PURZ", serial="WD-SN-001")])
+    api = _fake_api(devices=devices, inventory_items=items)
 
+    monkeypatch.setattr(ae_sync, "get_or_create_inventory_role", lambda n: 8)
+    monkeypatch.setattr(ae_sync, "get_or_create_manufacturer", lambda n: 5)
+    monkeypatch.setattr(ae_sync, "get_or_create_site", lambda n: 33)
+    monkeypatch.setattr(ae_sync, "get_or_create_device_type", lambda *a, **k: 44)
+    monkeypatch.setattr(ae_sync, "get_or_create_role", lambda n, *a: 7)
+
+    rec = _hdd_rec("HQ-NVR-02", "FK2666191")
+    # Parent must be indexed by serial and name for _ensure_inventory_item
+    existing_devices = {"fk2666191": parent}
+    by_name = {"hq-nvr-02": [parent]}
+    rc = _ensure_inventory_item(api, rec, existing_devices, by_name)
+    assert rc == "created"
     assert items.create_calls == 1
     p = items.created[0]
-    assert p["serial"] == "WD-SN-001"
-    assert p["part_id"] == "WD40PURZ"
-    assert calls["manufacturers"] == ["WD40PURZ"]
+    assert p["device"] == 9657
+    assert p["serial"] == "WD8PURZ-85BUY0"
+    assert "8TB" in p["name"] or "8TB" in p["description"]
 
-
-def test_no_real_serial_writes_nothing(monkeypatch, capsys):
-    items = FakeEndpoint([])
-    _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(slot="1", serial=None, cap="16TB"),
-                  _hdd(slot="2", serial=None, cap="16TB")],
-          probe={"serial": "FK2666199", "ip": "10.0.0.1"})
-
-    assert items.create_calls == 0 and items.update_calls == 0
-    assert "NO REAL HDD SERIAL" in capsys.readouterr().out
-
-
-def test_mixed_serials_only_syncs_real(monkeypatch):
-    items = FakeEndpoint([])
-    _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(slot="1", serial="WD-REAL-SN-1", cap="16TB"),
-                  _hdd(slot="2", serial=None, cap="16TB"),
-                  _hdd(slot="3", serial="WD-REAL-SN-3", cap="16TB")])
-
-    assert items.create_calls == 2
-    assert sorted(i["serial"] for i in items.created) == ["WD-REAL-SN-1",
-                                                          "WD-REAL-SN-3"]
-
-
-def test_never_substitutes_nvr_serial_mac_or_slot(monkeypatch):
-    items = FakeEndpoint([])
-    _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(slot="4", serial=None, cap="4TB")],
-          probe={"serial": "FK2666199", "mac": "aa:bb:cc:dd:ee:ff"})
-
-    assert items.create_calls == 0
-    for it in items.created + items.updated:
-        s = it.get("serial", "")
-        assert "FK2666199" not in s and "SLOT" not in s and ":" not in s
-
-
-def test_missing_model_falls_back_to_unknown(monkeypatch):
-    items = FakeEndpoint([])
-    calls = _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(model=None)])
-
-    assert calls["manufacturers"] == ["Unknown"]
-    assert "part_id" not in items.created[0]
-
-
-def test_same_real_serial_updates_in_place(monkeypatch):
-    items = FakeEndpoint([FakeRecord(7, serial="WD-SN-001", device_id=42,
-                                     name="old",
-                                     role=type("R", (), {"name": "HDD"})())])
-    _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(serial="WD-SN-001")])
-
-    assert items.create_calls == 0 and items.update_calls == 1
-    assert items.updated[0]["id"] == 7
-    assert items.updated[0]["serial"] == "WD-SN-001"
-
-
-def test_update_is_idempotent(monkeypatch):
-    items = FakeEndpoint([])
-    _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(serial="WD-SN-001")])
-    first_calls = items.create_calls
-    _sync(items, [_hdd(serial="WD-SN-001")])
-    assert items.create_calls == first_calls
-    assert items.update_calls == 1
-
-
-def test_dahua_no_hdds_writes_nothing():
-    items = FakeEndpoint([])
-    _sync(items, [], vendor="Dahua")
-    assert items.create_calls == 0 and items.update_calls == 0
-
-
-def test_unv_no_hdds_writes_nothing():
-    items = FakeEndpoint([])
-    _sync(items, [], vendor="Uniview")
-    assert items.create_calls == 0 and items.update_calls == 0
-
-
-def test_real_serial_does_not_steal_unrelated_item(monkeypatch):
-    """A disk with a real NVR serial that is NOT in NetBox creates a new item;
-    it must never adopt an unrelated item that has a different real serial."""
-    items = FakeEndpoint([FakeRecord(12, serial="WCC7K7TPPYXD", device_id=42,
-                                     name="WCC7K7TPPYXD (4TB)",
-                                     role=type("R", (), {"name": "HDD"})())])
-    _patch_netbox(monkeypatch)
-    _sync(items, [_hdd(serial="REAL-NVR-SERIAL", cap="4TB")])
-
+    # second run: idempotent — same serial, no duplicate.
+    # Give created items a real device object so the second-run serial scan
+    # can read c.device.name (FakeEndpoint stores device as an int id).
+    for item in items.items:
+        item.device = parent
+    rc = _ensure_inventory_item(api, rec, {}, {})
+    assert rc in ("skipped", "updated")
     assert items.create_calls == 1
-    assert items.created[0]["serial"] == "REAL-NVR-SERIAL"
-    assert items.updated == []
-
-
-def test_parse_hdd_capacity_is_decimal_tb():
-    from netbox_sync.collectors import hikvision as hk
-    xml = ('<hddList xmlns="http://www.isapi.org/ver20/XMLSchema">'
-           '<hdd><id>1</id><hddType>SATA</hddType><capacity>17166336</capacity>'
-           '<status>ok</status><property>RW</property><hddSerialNumber></hddSerialNumber>'
-           '<hddModel></hddModel></hdd></hddList>')
-    hdds = hk._parse_hdd_list(xml)
-    assert hdds[0]["capacity"] == "16TB"
