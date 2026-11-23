@@ -5,10 +5,10 @@ Usage:
     python sync_single_device.py <ip> [--type server|storage|san|cisco|fortigate|ruckus|unifi|hikvision|dahua|unv|ftd]
 
 Examples:
-    python sync_single_device.py 192.168.19.70
-    python sync_single_device.py 172.31.2.202 --type ruckus
-    python sync_single_device.py 192.168.244.66 --type dahua
-    python sync_single_device.py 192.168.16.143 --type ftd    # FMC IP, syncs all managed FTDs
+    python sync_single_device.py 192.168.0.2
+    python sync_single_device.py 192.168.0.2 --type ruckus
+    python sync_single_device.py 192.168.0.2 --type dahua
+    python sync_single_device.py 192.168.0.2 --type ftd    # FMC IP, syncs all managed FTDs
 """
 import argparse
 import sys
